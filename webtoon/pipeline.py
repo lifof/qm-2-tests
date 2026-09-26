@@ -15,6 +15,7 @@ from .models import ChapterPlan, ChapterRecord, Project
 from .planner import plan_chapter
 from .project import ProjectDir, apply_plan, stable_seed
 from .prompts import panel_prompt, reference_sheet_prompt
+from .textio import encoding_label, read_chapter
 
 Log = Callable[[str], None]
 
@@ -23,7 +24,10 @@ def plan_step(pdir: ProjectDir, project: Project, chapter_file: Path, number: in
               plan: Optional[ChapterPlan] = None) -> ChapterPlan:
     if plan is None:
         log(f"Planning chapter {number} with {project.planner.provider}:{project.planner.model} ...")
-        plan, report = plan_chapter(project, chapter_file.read_text(encoding="utf-8"), number,
+        text, encoding = read_chapter(chapter_file)
+        if encoding not in ("utf-8", "utf-8-sig"):
+            log(f"  (read {chapter_file.name} as {encoding_label(encoding)})")
+        plan, report = plan_chapter(project, text, number,
                                     cache_dir=pdir.chapter_dir(number) / "segments", log=log)
         pdir.chapter_dir(number).mkdir(parents=True, exist_ok=True)
         (pdir.chapter_dir(number) / "coverage.json").write_text(json.dumps(report, indent=2, ensure_ascii=False),

@@ -31,6 +31,7 @@ from .planner import plan_chapter
 from .project import ProjectDir
 from .prompts import reference_sheet_prompt
 from .segment import split_segments, target_panels
+from .textio import ChapterFileError, encoding_label, read_chapter
 
 CONFIG_PATH = Path(os.environ.get("WEBTOON_CONFIG", Path.home() / ".config" / "webtoon" / "app.json"))
 
@@ -56,6 +57,12 @@ API_KEYS = {
 
 class Back(Exception):
     """Raised to leave the current submenu."""
+
+
+def _needs_comfyui(model: str) -> bool:
+    """True for a local file, or a folder that isn't in diffusers format."""
+    path = Path(model).expanduser()
+    return path.is_file() or (path.is_dir() and not (path / "model_index.json").exists())
 
 
 def _valid_comfy_dir(value: str):
@@ -88,6 +95,7 @@ class App:
         self.project: Optional[Project] = None
         self._backend = None
         self._backend_key = ""
+        self._checked_setup: Optional[Path] = None
         if project_path:
             self.open_project(Path(project_path), create_if_missing=True)
 
@@ -154,6 +162,7 @@ class App:
             if self.project is None:
                 self.choose_project()
             while True:
+                self.check_setup()
                 self.show_header()
                 try:
                     if not self.main_menu():
@@ -161,7 +170,7 @@ class App:
                 except (Back, KeyboardInterrupt):
                     self.console.print("[dim]cancelled[/]")
                 except Exception as exc:  # keep the app alive on errors in one action
-                    self.console.print(Panel(f"{type(exc).__name__}: {exc}", title="Error", border_style="red"))
+                    self.console.print(Panel(escape(f"{type(exc).__name__}: {exc}"), title="Error", border_style="red"))
         except (Back, KeyboardInterrupt, EOFError):
             pass
         self.console.print("Bye!")
@@ -242,7 +251,33 @@ class App:
             w.append("ANTHROPIC_API_KEY is not set (fine if you used `ant auth login`)")
         if p.planner.provider == "openai" and not p.planner.base_url:
             w.append("planner server URL is not set")
+        if p.planner.provider == "mock":
+            w.append("planner is 'mock' (test mode): every paragraph just becomes a caption. Choose Claude or a "
+                     "local LLM in Settings for a real storyboard")
+        if p.image.backend == "diffusers" and _needs_comfyui(p.image.model):
+            w.append("the diffusers backend can't load single-file / Qwen-Image 2.1 checkpoints - switch to ComfyUI "
+                     "in Settings > Backend and model files")
         return w
+
+    def check_setup(self) -> None:
+        """Once per opened project: offer to move a project whose model files need ComfyUI onto it."""
+        if self._checked_setup == self.pdir.root:
+            return
+        self._checked_setup = self.pdir.root
+        img = self.project.image
+        if img.backend != "diffusers" or not _needs_comfyui(img.model):
+            return
+        folder = Path(img.model).expanduser()
+        folder = folder if folder.is_dir() else folder.parent
+        self.console.print(Panel(
+            f"This project uses the diffusers backend with {escape(str(folder))}, but that folder holds single-file "
+            "checkpoints (like Qwen-Image 2.1's .gguf / .safetensors files), which diffusers can't load. "
+            "They run through ComfyUI instead.", title="Image model setup", border_style="yellow"))
+        if self.confirm("Set up ComfyUI for this project now?", default=True):
+            img.backend = "comfyui"
+            self.configure_comfyui(folder)
+            if self.confirm("Also make these model settings the default for new projects?", default=True):
+                self.save_defaults()
 
     # ------------------------------------------------------------------ projects
     def choose_project(self) -> None:
@@ -567,7 +602,14 @@ class App:
         next_n = max((c.number for c in p.chapters), default=0) + 1
         file = self.path("Chapter text file:", validate=lambda v: Path(v).expanduser().is_file() or "File not found")
         file_path = Path(file).expanduser().resolve()
-        text = file_path.read_text(encoding="utf-8")
+        try:
+            text, encoding = read_chapter(file_path)
+        except ChapterFileError as exc:
+            self.console.print(Panel(escape(str(exc)), title="Can't read this chapter file", border_style="red"))
+            return
+        if encoding not in ("utf-8", "utf-8-sig"):
+            self.console.print(f"[dim]{escape(file_path.name)} isn't UTF-8; read it as {encoding_label(encoding)}. "
+                               f"First line: {escape(text.strip().splitlines()[0][:80]) if text.strip() else '(empty)'}[/]")
         number = self.number("Chapter number:", next_n)
         if any(c.number == number for c in p.chapters) and not self.confirm(
                 f"Chapter {number} already exists. Redo it (storyboard and images)?", default=False):
