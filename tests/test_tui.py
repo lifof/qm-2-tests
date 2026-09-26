@@ -156,3 +156,39 @@ def test_old_diffusers_project_is_moved_to_comfyui_and_reads_mac_roman(tmp_path)
 
     img = json.loads((project / "story.json").read_text())["image"]
     assert img["backend"] == "comfyui" and img["diffusion_model"].endswith(".gguf")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="needs a pty")
+def test_declined_setup_is_offered_again_before_drawing(tmp_path):
+    from webtoon.cli import main as cli_main
+
+    models = tmp_path / "qwen-image-2.1"
+    models.mkdir()
+    for name in ("qwen-image-2.1-UC-BF16.gguf", "qwen3vl_8b_bf16.safetensors", "qwen_image_2.1_vae_bf16.safetensors"):
+        (models / name).write_bytes(b"x")
+    project = tmp_path / "story"
+    cli_main(["init", str(project), "--image-backend", "diffusers", "--image-model", str(models), "--planner", "mock",
+              "--image-base-url", "http://127.0.0.1:9"])
+    env = dict(os.environ, WEBTOON_CONFIG=str(tmp_path / "app.json"), PYTHONPATH=str(ROOT), BROWSER="true")
+    child = pexpect.spawn(sys.executable, ["-m", "webtoon", "app", str(project)], cwd=str(tmp_path), env=env,
+                          encoding="utf-8", timeout=60, dimensions=(50, 160))
+
+    def step(prompt, keys):
+        child.expect(prompt)
+        child.send(keys)
+
+    step("Set up ComfyUI for this project now", "n")  # decline at startup
+    step("What do you want to do", DOWN * 3 + ENTER)  # Test the image model
+    step("Set up ComfyUI for this project now", ENTER)  # offered again instead of a ValueError
+    step("Folder with your Qwen-Image 2.1 model files", ENTER)
+    step("Use these files", ENTER)
+    step("Your ComfyUI folder", ENTER)
+    step("ComfyUI address", ENTER)  # keeps the (unreachable) address from the project
+    step("official Qwen-Image 2.1 sampling settings", ENTER)
+    step("reference sheet", ENTER)
+    step("Generate a test image now", ENTER)
+    step("default for new projects", "n")
+    child.expect("not reachable")  # now it's a ComfyUI problem with a clear message, not a diffusers error
+    step("What do you want to do", UP + ENTER)
+    child.expect(pexpect.EOF)
+    assert json.loads((project / "story.json").read_text())["image"]["backend"] == "comfyui"

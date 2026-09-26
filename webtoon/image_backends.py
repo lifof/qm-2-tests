@@ -87,9 +87,12 @@ class DiffusersBackend(ImageBackend):
         dtype = torch.bfloat16 if device == "cuda" else torch.float32
         model = Path(settings.model).expanduser()
         if model.is_file() or (model.is_dir() and not (model / "model_index.json").exists()):
+            folder = model if model.is_dir() else model.parent
             raise ValueError(
                 f"{settings.model} is not a diffusers model folder (no model_index.json). Single-file checkpoints "
-                "(.gguf / .safetensors, e.g. Qwen-Image 2.1) need the 'comfyui' backend."
+                "(.gguf / .safetensors, e.g. Qwen-Image 2.1) need the 'comfyui' backend. Switch in the app "
+                "(Settings > Backend and model files), or run: python -m webtoon init <project> "
+                f"--image-backend comfyui --model-dir \"{folder}\" --comfy-dir <your ComfyUI folder>"
             )
         import diffusers.utils as dutils
 

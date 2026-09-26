@@ -264,20 +264,31 @@ class App:
         if self._checked_setup == self.pdir.root:
             return
         self._checked_setup = self.pdir.root
+        self.offer_comfyui()
+
+    def offer_comfyui(self) -> bool:
+        """If the project points diffusers at single-file checkpoints, offer to switch it to ComfyUI.
+
+        Returns True when the image settings are usable afterwards.
+        """
         img = self.project.image
         if img.backend != "diffusers" or not _needs_comfyui(img.model):
-            return
+            return True
         folder = Path(img.model).expanduser()
         folder = folder if folder.is_dir() else folder.parent
         self.console.print(Panel(
             f"This project uses the diffusers backend with {escape(str(folder))}, but that folder holds single-file "
             "checkpoints (like Qwen-Image 2.1's .gguf / .safetensors files), which diffusers can't load. "
             "They run through ComfyUI instead.", title="Image model setup", border_style="yellow"))
-        if self.confirm("Set up ComfyUI for this project now?", default=True):
-            img.backend = "comfyui"
-            self.configure_comfyui(folder)
-            if self.confirm("Also make these model settings the default for new projects?", default=True):
-                self.save_defaults()
+        if not self.confirm("Set up ComfyUI for this project now?", default=True):
+            self.console.print("[dim]OK - you can do it any time in Settings > Backend and model files.[/]")
+            return False
+        img.backend = "comfyui"
+        self.save()
+        self.configure_comfyui(folder)
+        if self.confirm("Also make these model settings the default for new projects?", default=True):
+            self.save_defaults()
+        return True
 
     # ------------------------------------------------------------------ projects
     def choose_project(self) -> None:
@@ -586,6 +597,8 @@ class App:
 
     # ------------------------------------------------------------------ backend
     def backend(self):
+        if not self.offer_comfyui():
+            raise Back()
         key = self.project.image.model_dump_json()
         if self._backend is None or key != self._backend_key:
             with self.console.status(f"Loading {self.project.image.backend}: {self.project.image.model} ..."):
