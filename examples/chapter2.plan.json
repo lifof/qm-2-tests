@@ -1,0 +1,108 @@
+{
+  "title": "The Harbor Master",
+  "new_characters": [
+    {
+      "name": "Mira Han",
+      "aliases": [
+        "Mimi"
+      ],
+      "role": "Protagonist",
+      "appearance": "blonde woman with curly hair (planner drift - must be ignored)",
+      "outfit": "whatever"
+    },
+    {
+      "name": "Captain Vale",
+      "aliases": [
+        "Vale"
+      ],
+      "role": "Harbor master who knows about the lantern",
+      "appearance": "tall woman in her 40s, athletic build, dark brown skin, strong jaw, grey eyes, silver-streaked black hair in a tight braid, thin scar across right eyebrow",
+      "outfit": "long navy greatcoat with brass buttons, black gloves, tall boots"
+    }
+  ],
+  "character_updates": [
+    {
+      "name": "Mimi",
+      "outfit": "bright yellow raincoat over grey cardigan, dark jeans, red sneakers",
+      "appearance_change": ""
+    }
+  ],
+  "panels": [
+    {
+      "shot": "wide",
+      "location": "foggy wooden pier at Harbor City docks",
+      "time_of_day": "early morning",
+      "characters": [
+        "Mimi"
+      ],
+      "action": "Mira walks down the pier holding the tiny glowing lantern",
+      "mood": "cold grey fog, cyan glow",
+      "narration": "The next morning.",
+      "dialogue": [],
+      "sfx": ""
+    },
+    {
+      "shot": "medium",
+      "location": "foggy wooden pier at Harbor City docks",
+      "time_of_day": "early morning",
+      "characters": [
+        "Captain Vale"
+      ],
+      "action": "Vale stands with her back turned, looking out into the fog",
+      "mood": "ominous",
+      "narration": "",
+      "dialogue": [
+        {
+          "speaker": "Captain Vale",
+          "text": "That light. Where did you get it?",
+          "kind": "speech"
+        }
+      ],
+      "sfx": ""
+    },
+    {
+      "shot": "close-up",
+      "location": "foggy wooden pier at Harbor City docks",
+      "time_of_day": "early morning",
+      "characters": [
+        "Mira Han"
+      ],
+      "action": "Mira clutching the lantern defensively",
+      "mood": "tense",
+      "narration": "",
+      "dialogue": [
+        {
+          "speaker": "Mira Han",
+          "text": "Who are you?",
+          "kind": "speech"
+        }
+      ],
+      "sfx": ""
+    },
+    {
+      "shot": "close-up",
+      "location": "foggy wooden pier at Harbor City docks",
+      "time_of_day": "early morning",
+      "characters": [
+        "Captain Vale"
+      ],
+      "action": "Vale turns, grey eyes serious",
+      "mood": "dramatic",
+      "narration": "",
+      "dialogue": [
+        {
+          "speaker": "Captain Vale",
+          "text": "Captain Vale. Harbor master.",
+          "kind": "speech"
+        },
+        {
+          "speaker": "Captain Vale",
+          "text": "And that lantern belongs to the sea.",
+          "kind": "shout"
+        }
+      ],
+      "sfx": ""
+    }
+  ],
+  "summary": "Mira takes the lantern to the docks, where harbor master Captain Vale recognises it and claims it belongs to the sea."
+}

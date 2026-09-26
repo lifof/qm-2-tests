@@ -1,0 +1,10 @@
+pydantic>=2.6
+pillow>=10.1
+requests>=2.31
+anthropic>=1.8          # planner: --planner anthropic (default)
+openai>=1.40            # planner: --planner openai (self-hosted LLM, e.g. Qwen via vLLM/Ollama)
+
+# Only for --image-backend diffusers (running Qwen-Image locally):
+# torch>=2.3
+# diffusers>=0.36
+# transformers accelerate

@@ -1,0 +1,123 @@
+{
+  "title": "The Lantern Shop",
+  "new_characters": [
+    {
+      "name": "Mira Han",
+      "aliases": [],
+      "role": "Protagonist, granddaughter of the lantern shop owner",
+      "appearance": "young Korean woman, early 20s, slim, fair skin, oval face, large dark brown eyes, straight black hair in a shoulder-length bob with blunt bangs, small mole under left eye",
+      "outfit": "oversized grey knit cardigan over a white t-shirt, dark jeans, red sneakers"
+    },
+    {
+      "name": "Joon Seo",
+      "aliases": [
+        "Joon"
+      ],
+      "role": "Mira's friend who works at the shop",
+      "appearance": "young Korean man, mid 20s, tall and lanky, tan skin, narrow face, sharp eyes behind round wire glasses, messy wavy brown hair",
+      "outfit": "rolled-up white shirt, brown leather work apron"
+    }
+  ],
+  "character_updates": [],
+  "panels": [
+    {
+      "shot": "establishing",
+      "location": "rainy old street in Harbor City with a small lantern shop",
+      "time_of_day": "evening",
+      "characters": [],
+      "action": "Heavy rain over narrow street, warm light glowing from the lantern shop window",
+      "mood": "moody blue rain, warm window glow",
+      "narration": "Rain had not stopped in Harbor City for eleven days.",
+      "dialogue": [],
+      "sfx": ""
+    },
+    {
+      "shot": "medium",
+      "location": "inside the lantern shop, hundreds of lanterns hanging from the ceiling",
+      "time_of_day": "evening",
+      "characters": [
+        "Mira Han"
+      ],
+      "action": "Mira pushes the door open, soaked, a brass bell swinging above the door",
+      "mood": "warm amber light",
+      "narration": "",
+      "dialogue": [],
+      "sfx": "Ding!"
+    },
+    {
+      "shot": "medium",
+      "location": "inside the lantern shop, hundreds of lanterns hanging from the ceiling",
+      "time_of_day": "evening",
+      "characters": [
+        "Joon Seo"
+      ],
+      "action": "Joon behind the wooden counter polishing a brass lantern, not looking up",
+      "mood": "warm amber light",
+      "narration": "",
+      "dialogue": [
+        {
+          "speaker": "Joon Seo",
+          "text": "You're late.",
+          "kind": "speech"
+        }
+      ],
+      "sfx": ""
+    },
+    {
+      "shot": "close-up",
+      "location": "inside the lantern shop, hundreds of lanterns hanging from the ceiling",
+      "time_of_day": "evening",
+      "characters": [
+        "Mira Han"
+      ],
+      "action": "Mira shaking water from her sleeves, annoyed expression",
+      "mood": "warm, slightly comedic",
+      "narration": "",
+      "dialogue": [
+        {
+          "speaker": "Mira Han",
+          "text": "The tram flooded.",
+          "kind": "speech"
+        },
+        {
+          "speaker": "Mira Han",
+          "text": "Again.",
+          "kind": "speech"
+        }
+      ],
+      "sfx": ""
+    },
+    {
+      "shot": "over-the-shoulder",
+      "location": "inside the lantern shop, hundreds of lanterns hanging from the ceiling",
+      "time_of_day": "evening",
+      "characters": [
+        "Joon Seo",
+        "Mira Han"
+      ],
+      "action": "Over Mira's shoulder, Joon slides a small wooden box across the counter",
+      "mood": "curious, quiet",
+      "narration": "",
+      "dialogue": [
+        {
+          "speaker": "Joon Seo",
+          "text": "Something came for you. No return address.",
+          "kind": "speech"
+        }
+      ],
+      "sfx": ""
+    },
+    {
+      "shot": "extreme-close-up",
+      "location": "inside the lantern shop, hundreds of lanterns hanging from the ceiling",
+      "time_of_day": "evening",
+      "characters": [],
+      "action": "Hands opening a box: a palm-sized lantern wrapped in black silk begins to glow softly",
+      "mood": "mysterious cyan glow in darkness",
+      "narration": "It was cold. Then, slowly, it began to glow.",
+      "dialogue": [],
+      "sfx": ""
+    }
+  ],
+  "summary": "In rain-soaked Harbor City, Mira Han arrives late at her grandmother's lantern shop, where her friend Joon Seo gives her an anonymous package. Inside is a tiny cold lantern that starts to glow."
+}
