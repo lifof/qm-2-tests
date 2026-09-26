@@ -10,7 +10,7 @@ from typing import Callable, Iterable, Optional
 from PIL import Image
 
 from . import compose
-from .image_backends import PORTRAIT_SIZE, ImageBackend, make_backend, size_for_shot
+from .image_backends import ImageBackend, make_backend, portrait_size, size_for_shot
 from .models import ChapterPlan, ChapterRecord, Project
 from .planner import plan_chapter
 from .project import ProjectDir, apply_plan, stable_seed
@@ -54,7 +54,7 @@ def ensure_reference_sheets(pdir: ProjectDir, project: Project, names: Iterable[
         if c.reference_image and (pdir.root / c.reference_image).exists():
             continue
         log(f"  drawing character sheet for {c.name} ...")
-        w, h = PORTRAIT_SIZE
+        w, h = portrait_size(project.image.megapixels)
         img = backend.generate(reference_sheet_prompt(project, c), project.negative_prompt, w, h, c.seed)
         pdir.characters_dir.mkdir(parents=True, exist_ok=True)
         path = pdir.characters_dir / f"{_slug(c.name)}.png"
@@ -92,7 +92,7 @@ def render_step(pdir: ProjectDir, project: Project, number: int, only: Optional[
         panel = plan.panels[i]
         prompt, chars = panel_prompt(project, panel)
         refs = [pdir.root / c.reference_image for c in chars if c.reference_image] if use_refs else []
-        w, h = size_for_shot(panel.shot)
+        w, h = size_for_shot(panel.shot, project.image.megapixels)
         log(f"  panel {i + 1}/{len(plan.panels)} [{panel.shot}] {', '.join(c.name for c in chars) or '-'}")
         img = backend.generate(prompt, project.negative_prompt, w, h,
                                stable_seed(f"{project.title}:{number}:{i}"), refs[:3])

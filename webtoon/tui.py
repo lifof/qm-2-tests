@@ -9,19 +9,22 @@ from __future__ import annotations
 import copy
 import json
 import os
+import subprocess
 import time
 import webbrowser
 from pathlib import Path
 from typing import Any, Callable, List, Optional
 
 import questionary
+from prompt_toolkit.completion import PathCompleter
 from questionary import Choice, Separator
 from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from .image_backends import PORTRAIT_SIZE, make_backend
+from .comfyui import GGUF_REPO, MODEL_SUBDIRS, comfy_python, detect_model_files, memory_report
+from .image_backends import make_backend, portrait_size
 from .models import Project
 from .pipeline import assemble_step, ensure_reference_sheets, plan_step, render_step
 from .planner import plan_chapter
@@ -32,7 +35,8 @@ from .segment import split_segments, target_panels
 CONFIG_PATH = Path(os.environ.get("WEBTOON_CONFIG", Path.home() / ".config" / "webtoon" / "app.json"))
 
 IMAGE_BACKENDS = {
-    "diffusers": "Local weights (runs Qwen-Image on this machine's GPU with diffusers)",
+    "comfyui": "Qwen-Image 2.1 model files (.gguf / .safetensors) through ComfyUI - recommended",
+    "diffusers": "A diffusers model folder (Qwen-Image 1.x; runs in-process)",
     "openai": "My own server with an OpenAI-style /v1/images API (vLLM-Omni, LocalAI, custom...)",
     "dashscope": "Alibaba Cloud Model Studio (DashScope API)",
     "mock": "Placeholder images (test the pipeline without a GPU)",
@@ -52,6 +56,13 @@ API_KEYS = {
 
 class Back(Exception):
     """Raised to leave the current submenu."""
+
+
+def _valid_comfy_dir(value: str):
+    if not value.strip():
+        return True
+    folder = Path(value).expanduser()
+    return (folder / "main.py").exists() or (folder / "models").is_dir() or "Not a ComfyUI folder (no main.py or models/)"
 
 
 def parse_panel_list(text: str) -> set[int]:
@@ -93,8 +104,13 @@ class App:
                                           **self.prompt_kwargs))
 
     def path(self, message: str, default: str = "", only_directories: bool = False, validate=None):
-        return self._ask(questionary.path(message, default=default or "", only_directories=only_directories,
-                                          validate=validate, **self.prompt_kwargs))
+        # A text prompt with a path completer: Tab completes, Enter always submits.
+        # (questionary.path opens its menu on every "/" and then needs a second Enter.)
+        answer = self._ask(questionary.text(
+            message, default=default or "", validate=validate,
+            completer=PathCompleter(expanduser=True, only_directories=only_directories),
+            complete_while_typing=False, **self.prompt_kwargs))
+        return answer.rstrip("/\\") if len(answer) > 1 else answer
 
     def confirm(self, message: str, default: bool = True) -> bool:
         return self._ask(questionary.confirm(message, default=default, **self.prompt_kwargs))
@@ -184,7 +200,11 @@ class App:
         rows.add_column(style="bold cyan")
         rows.add_column()
         rows.add_row("Project", f"{p.title}  [dim]{self.pdir.root}[/]")
-        rows.add_row("Image model", f"{img.backend}: {img.model}" + (f"  @ {img.base_url}" if img.base_url else ""))
+        if img.backend == "comfyui":
+            where = img.comfy_dir or img.base_url or "http://127.0.0.1:8188"
+            rows.add_row("Image model", f"Qwen-Image 2.1 via ComfyUI: {Path(img.diffusion_model or '-').name}  [dim]{where}[/]")
+        else:
+            rows.add_row("Image model", f"{img.backend}: {img.model}" + (f"  @ {img.base_url}" if img.base_url else ""))
         rows.add_row("Planner", f"{pl.provider}: {pl.model}" + (f"  @ {pl.base_url}" if pl.base_url else ""))
         rows.add_row("Chapters", ", ".join(f"{c.number}. {c.title}" for c in p.chapters) or "none yet")
         warnings = self.config_warnings()
@@ -200,6 +220,22 @@ class App:
             w.append(f"'{p.image.model}' is not a local folder - it will be downloaded from Hugging Face")
         if p.image.backend == "openai" and not p.image.base_url:
             w.append("image server URL is not set")
+        if p.image.backend == "comfyui" and not p.image.workflow_file:
+            for kind in MODEL_SUBDIRS:
+                value = getattr(p.image, kind)
+                if not value:
+                    w.append(f"{kind.replace('_', ' ')} file is not set (Settings > Image model)")
+                elif os.sep in value and not Path(value).expanduser().exists():
+                    w.append(f"{kind.replace('_', ' ')} file not found: {value}")
+            comfy = Path(p.image.comfy_dir).expanduser() if p.image.comfy_dir else None
+            if comfy and _valid_comfy_dir(str(comfy)) is not True:
+                w.append(f"no ComfyUI at {comfy}")
+            files = {k: Path(getattr(p.image, k)).expanduser() if getattr(p.image, k) else None for k in MODEL_SUBDIRS}
+            for warning in memory_report(files)[1]:
+                w.append(warning.split(". ")[0] + " - see README 'Running on a Mac'")
+            if comfy and str(p.image.diffusion_model or "").lower().endswith(".gguf") and \
+                    not (comfy / "custom_nodes" / "ComfyUI-GGUF").exists():
+                w.append("ComfyUI-GGUF custom node is not installed (needed for .gguf) - Settings > Image model")
         if p.image.backend == "dashscope" and not os.environ.get("DASHSCOPE_API_KEY"):
             w.append("DASHSCOPE_API_KEY is not set")
         if p.planner.provider == "anthropic" and not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
@@ -273,9 +309,20 @@ class App:
         img = self.project.image
         img.backend = self.select("How do you run Qwen-Image?", [Choice(v, k) for k, v in IMAGE_BACKENDS.items()],
                                   default=img.backend)
+        if img.backend == "comfyui":
+            self.configure_comfyui()
+            return
         if img.backend == "diffusers":
             model = self.path("Model folder (or a Hugging Face repo id):", img.model)
-            img.model = str(Path(model).expanduser()) if Path(model).expanduser().exists() else model.strip()
+            path = Path(model).expanduser()
+            if path.is_file() or (path.is_dir() and not (path / "model_index.json").exists()):
+                self.console.print("[yellow]That is not a diffusers model folder (no model_index.json). Single-file "
+                                   "checkpoints such as Qwen-Image 2.1 (.gguf / .safetensors) run through ComfyUI.[/]")
+                if self.confirm("Set it up with ComfyUI instead?", default=True):
+                    img.backend = "comfyui"
+                    self.configure_comfyui(path if path.is_dir() else path.parent)
+                    return
+            img.model = str(path) if path.exists() else model.strip()
             img.base_url = None
         elif img.backend == "openai":
             img.base_url = self.text("Server base URL:", img.base_url or "http://localhost:8000/v1",
@@ -291,6 +338,75 @@ class App:
                 "Does this model accept reference images (Qwen-Image-Edit style)? If yes, character sheets are "
                 "passed with every panel for stronger consistency.", default=img.use_references)
         self.save()
+
+    def configure_comfyui(self, folder: Optional[Path] = None) -> None:
+        img = self.project.image
+        self.console.print("[dim]Qwen-Image 2.1 comes as three files: the diffusion model, the Qwen3-VL text encoder "
+                           "and the VAE. They are run with ComfyUI, which supports the model natively.[/]")
+        start = folder or (Path(img.diffusion_model).expanduser().parent if img.diffusion_model else None)
+        folder = Path(self.path("Folder with your Qwen-Image 2.1 model files:", str(start or ""), only_directories=True,
+                                validate=lambda v: Path(v).expanduser().is_dir() or "Folder not found")).expanduser()
+        found = detect_model_files(folder)
+        table = Table(show_header=False, box=None)
+        for kind, path in found.items():
+            table.add_row(kind.replace("_", " "), path.name if path else "[red]not found[/]")
+        self.console.print(Panel(table, title="Detected model files"))
+        if not all(found.values()) or not self.confirm("Use these files?", default=True):
+            for kind in MODEL_SUBDIRS:
+                default = found[kind] or (Path(getattr(img, kind)) if getattr(img, kind) else folder)
+                chosen = self.path(f"{kind.replace('_', ' ').capitalize()} file:", str(default),
+                                   validate=lambda v: Path(v).expanduser().is_file() or "File not found")
+                found[kind] = Path(chosen).expanduser()
+        for kind, path in found.items():
+            setattr(img, kind, str(path.resolve()))
+        img.model = found["diffusion_model"].name
+        info, warnings = memory_report(found)
+        self.console.print("[dim]" + " | ".join(info) + "[/]")
+        for warning in warnings:
+            self.console.print(Panel(escape(warning), title="Memory", border_style="yellow"))
+
+        comfy = self.path("Your ComfyUI folder (with main.py, or the ComfyUI Desktop folder with models/). The files "
+                          "get linked into it. Leave empty if ComfyUI runs on another machine:",
+                          img.comfy_dir or "", only_directories=True, validate=_valid_comfy_dir)
+        img.comfy_dir = str(Path(comfy).expanduser().resolve()) if comfy.strip() else None
+        desktop = bool(img.comfy_dir) and not (Path(img.comfy_dir) / "main.py").exists()
+        if desktop:
+            self.console.print("[dim]That looks like ComfyUI Desktop: open the ComfyUI app before drawing. Its server "
+                               "address is in the app's settings (usually port 8000).[/]")
+        default_url = img.base_url or ("http://127.0.0.1:8000" if desktop else "http://127.0.0.1:8188")
+        img.base_url = self.text("ComfyUI address:", default_url,
+                                 validate=lambda v: v.startswith("http") or "Must start with http").strip()
+        if not img.comfy_dir:
+            self.console.print("[dim]Make sure ComfyUI can see the files: put (or link) them in ComfyUI/models/"
+                               "diffusion_models, text_encoders and vae.[/]")
+        uses_gguf = any(str(getattr(img, k) or "").lower().endswith(".gguf") for k in MODEL_SUBDIRS)
+        if uses_gguf and img.comfy_dir and not (Path(img.comfy_dir) / "custom_nodes" / "ComfyUI-GGUF").exists():
+            self.console.print("[yellow]Loading .gguf files needs the ComfyUI-GGUF custom node, which isn't installed.[/]")
+            if self.confirm("Install it now (git clone + pip install into ComfyUI's Python)?", default=True):
+                self.install_gguf_node(Path(img.comfy_dir))
+
+        if self.confirm("Use the official Qwen-Image 2.1 sampling settings (25 steps, CFG 1.0, euler / simple)?",
+                        default=True):
+            img.steps, img.cfg, img.sampler, img.scheduler = 25, 1.0, "euler", "simple"
+        img.use_references = self.confirm(
+            "Pass each character's reference sheet to Qwen-Image 2.1 with every panel they appear in? "
+            "(strongest consistency; slightly slower)", default=img.use_references)
+        self.save()
+        if self.confirm("Generate a test image now?", default=False):
+            self.test_image()
+
+    def install_gguf_node(self, comfy_dir: Path) -> None:
+        target = comfy_dir / "custom_nodes" / "ComfyUI-GGUF"
+        python = comfy_python(comfy_dir)
+        for cmd in (["git", "clone", "--depth", "1", GGUF_REPO, str(target)],
+                    [python, "-m", "pip", "install", "-r", str(target / "requirements.txt")]):
+            self.console.print(f"$ {' '.join(cmd)}", markup=False)
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                self.console.print((result.stdout + result.stderr)[-2000:], markup=False)
+                self.console.print("[red]Install failed - see the output above.[/]")
+                return
+        self.console.print(f"[green]ComfyUI-GGUF installed (using {python}).[/] Restart ComfyUI if it is already running.")
 
     def configure_planner(self) -> None:
         pl = self.project.planner
@@ -335,10 +451,19 @@ class App:
             short = lambda s, n=50: (s[:n] + "...") if s and len(s) > n else (s or "-")  # noqa: E731
             options = [
                 Separator("-- Image model --"),
-                Choice(f"Backend, model path / URL: {img.backend}: {short(img.model, 60)}", "image"),
+                Choice("Backend and model files: " + (f"ComfyUI: {Path(img.diffusion_model or '-').name}"
+                       if img.backend == "comfyui" else f"{img.backend}: {short(img.model, 60)}"), "image"),
                 Choice(f"Sampling steps: {img.steps}", "steps"),
+                Choice(f"Panel resolution: {img.megapixels:g} MP", "megapixels"),
                 Choice(f"CFG scale: {img.cfg}", "cfg"),
                 Choice(f"Pass character sheets as references: {'yes' if img.use_references else 'no'}", "refs"),
+            ] + ([
+                Choice(f"ComfyUI: {img.comfy_dir or 'not managed'} @ {img.base_url or 'http://127.0.0.1:8188'}"
+                       f"{'  args: ' + img.comfy_args if img.comfy_args else ''}", "comfy"),
+                Choice(f"Sampler / scheduler: {img.sampler} / {img.scheduler}", "sampler"),
+                Choice(f"Custom ComfyUI workflow: {img.workflow_file or 'none (built-in Qwen-Image 2.1 graph)'}",
+                       "workflow"),
+            ] if img.backend == "comfyui" else []) + [
                 Separator("-- Planner --"),
                 Choice(f"Planner: {pl.provider}: {pl.model}" + (f" @ {pl.base_url}" if pl.base_url else ""), "planner"),
                 Choice(f"Segment size for long chapters: {pl.segment_words} words", "segment"),
@@ -361,10 +486,31 @@ class App:
                 self.configure_image()
             elif what == "planner":
                 self.configure_planner()
+            elif what == "comfy":
+                comfy = self.path("ComfyUI folder (empty = ComfyUI runs on another machine):", img.comfy_dir or "",
+                                  only_directories=True, validate=_valid_comfy_dir)
+                img.comfy_dir = str(Path(comfy).expanduser().resolve()) if comfy.strip() else None
+                img.base_url = self.text("ComfyUI address:", img.base_url or "http://127.0.0.1:8188").strip()
+                img.comfy_args = self.text("Extra launch arguments (e.g. --lowvram; empty for none):",
+                                           img.comfy_args).strip()
+            elif what == "sampler":
+                img.sampler = self.text("Sampler name (ComfyUI):", img.sampler).strip()
+                img.scheduler = self.text("Scheduler (ComfyUI):", img.scheduler).strip()
+            elif what == "workflow":
+                self.console.print("[dim]Optional: build your own graph in ComfyUI (LoRAs, upscaling...), use "
+                                   "{{prompt}} {{negative}} {{seed}} {{width}} {{height}} {{steps}} {{cfg}} and "
+                                   "{{ref_1}}..{{ref_16}} (LoadImage) as values, then Workflow > Export (API).[/]")
+                wf = self.path("Workflow JSON (empty = built-in):", img.workflow_file or "",
+                               validate=lambda v: not v.strip() or Path(v).expanduser().is_file() or "File not found")
+                img.workflow_file = str(Path(wf).expanduser().resolve()) if wf.strip() else None
+            elif what == "megapixels":
+                self.console.print("[dim]Panels are shrunk to the strip width afterwards, so 1 MP is plenty for "
+                                   "screens. Higher = slower (roughly proportional to pixel count).[/]")
+                img.megapixels = self.number("Megapixels per panel:", img.megapixels, float)
             elif what == "steps":
                 img.steps = self.number("Sampling steps:", img.steps)
             elif what == "cfg":
-                img.cfg = self.number("CFG scale (true_cfg_scale):", img.cfg, float)
+                img.cfg = self.number("CFG scale (Qwen-Image 2.1 uses 1.0):", img.cfg, float)
             elif what == "refs":
                 img.use_references = self.confirm("Pass character sheets to the model as reference images?",
                                                   img.use_references)
@@ -595,7 +741,7 @@ class App:
         prompt = (reference_sheet_prompt(project, sample) if sample else
                   f"{project.style}. A young woman standing in a rainy neon-lit street at night, holding a glowing lantern.")
         with self.console.status("Generating a test image ..."):
-            w, h = PORTRAIT_SIZE
+            w, h = portrait_size(project.image.megapixels)
             backend.generate(prompt, project.negative_prompt, w, h, 1234).save(out)
         self.console.print(f"[green]Image model works[/] ({time.time() - started:.0f}s): {out}")
         if self.confirm("Open it?", default=True):

@@ -17,9 +17,9 @@ chapter1.txt ──► planner LLM ──► plan.json (panels, dialogue, cast) 
 
 ```bash
 pip install -r requirements.txt      # or: pip install -e .
-# to run Qwen-Image locally with diffusers, also:
-pip install torch "diffusers>=0.36" transformers accelerate
 ```
+
+For Qwen-Image 2.1 you also need [ComfyUI](https://github.com/comfyanonymous/ComfyUI), a recent version with Qwen-Image 2.1 support. See [Connecting your Qwen-Image model](#connecting-your-qwen-image-model).
 
 ## Interactive app
 
@@ -46,7 +46,7 @@ Everything is also scriptable:
 ```bash
 # 1. create a project and say how to reach your Qwen-Image model (settings are saved in story.json)
 python -m webtoon init my_story --title "The Lantern Shop" \
-    --image-backend diffusers --image-model /path/to/qwen-image-2.1
+    --image-backend comfyui --model-dir ~/Projects/qwen-image-2.1 --comfy-dir ~/ComfyUI
 
 # 2. first chapter
 python -m webtoon chapter my_story chapter1.txt
@@ -89,16 +89,65 @@ Runs can be resumed. Panels that already have art are skipped, so an interrupted
 
 ## Connecting your Qwen-Image model
 
-Pick the backend that matches how you run the model. You can change it any time with `init` on an existing project.
+### Qwen-Image 2.1 model files (recommended: `comfyui` backend)
+
+Qwen-Image 2.1 comes as three files:
+
+```
+qwen-image-2.1-UC-BF16.gguf            diffusion model (.gguf or .safetensors)
+qwen3vl_8b_bf16.safetensors            text encoder (Qwen3-VL 8B)
+qwen_image_2.1_vae_bf16.safetensors    VAE
+```
+
+diffusers can't load these files; it has no Qwen-Image 2.x pipeline. ComfyUI supports the model natively, so the app drives ComfyUI for you:
+
+1. **Install ComfyUI**, following its README (on a Mac, the Apple Silicon instructions). A `.gguf` diffusion model also needs the **ComfyUI-GGUF** custom node. The app offers to install it, or run:
+   ```bash
+   cd ~/ComfyUI/custom_nodes && git clone https://github.com/city96/ComfyUI-GGUF
+   ~/ComfyUI/.venv/bin/python -m pip install -r ComfyUI-GGUF/requirements.txt   # ComfyUI's own Python
+   ```
+2. **Point the app at your files.** In the app, go to *Settings → Backend and model files → Qwen-Image 2.1 model files*. Give it the folder holding the three files (they are detected automatically) and your ComfyUI folder. Or from the command line:
+   ```bash
+   python -m webtoon init my_story --image-backend comfyui \
+       --model-dir /Users/you/Projects/qwen-image-2.1 --comfy-dir ~/ComfyUI
+   ```
+
+Then just add chapters. The app:
+- symlinks the three files into `ComfyUI/models/{diffusion_models,text_encoders,vae}`, leaving the originals where they are;
+- starts ComfyUI if it isn't running (using ComfyUI's own `.venv`/`venv` if it has one; log in `~/.cache/webtoon/comfyui.log`) and stops it when you're done;
+- renders each panel with the same graph as ComfyUI's official Qwen-Image 2.1 template (`UnetLoaderGGUF`/`UNETLoader`, `CLIPLoader` type `qwen_image`, `VAELoader`, `TextEncodeQwenImage21`, `KSampler` with 25 steps, CFG 1.0, euler/simple);
+- passes the character sheets of everyone in the panel as reference images (`TextEncodeQwenImage21` accepts up to 16).
+
+If ComfyUI runs elsewhere, or you start it yourself, leave the ComfyUI folder empty and set `--image-base-url http://host:8188`. Then put the files in that ComfyUI's model folders yourself.
+
+Options: `--comfy-args "--lowvram"` passes extra launch flags, and `--sampler`/`--scheduler` change the sampler. `--workflow my_api.json` swaps in your own graph, built in ComfyUI with LoRAs, upscaling and so on, and exported with *Workflow → Export (API)*. Use `{{prompt}}` `{{negative}}` `{{seed}}` `{{width}}` `{{height}}` `{{steps}}` `{{cfg}}` as input values, and `{{ref_1}}`…`{{ref_16}}` as `LoadImage` file names.
+
+### Running on a Mac (Apple Silicon)
+
+The steps above work as-is on Apple Silicon. ComfyUI uses the GPU through Metal (MPS), and the app starts it with `PYTORCH_ENABLE_MPS_FALLBACK=1`, so an operation Metal lacks runs on the CPU instead of crashing. ComfyUI Desktop works too: pick its folder (the one with `models/`, usually `~/Documents/ComfyUI`) and open the app before drawing. Its server usually runs on port 8000.
+
+**Memory.** The GPU shares the Mac's memory but may only use about 75% of it by default: about 36 GB on a 48 GB machine. To draw panels quickly, ComfyUI needs the text encoder and the diffusion model loaded at the same time. The text encoder, Qwen3-VL-8B in BF16, is already about 16–17 GB. When you select your files, the app shows their sizes against your Mac's memory, and the header warns you if they won't fit together. If they don't:
+
+- Use a **Q8_0 GGUF** of the diffusion model instead of BF16: about half the size, with near-identical quality. (Q6_K / Q5_K_M are smaller again.)
+- Use a **GGUF text encoder**. A `.gguf` text encoder is loaded with `CLIPLoaderGGUF` automatically.
+- Or raise the GPU limit until the next reboot, leaving several GB for macOS: `sudo sysctl iogpu.wired_limit_mb=40960`.
+
+The int8 "convrot" files that ComfyUI's own template links to ([Comfy-Org/Qwen-Image-2.1](https://huggingface.co/Comfy-Org/Qwen-Image-2.1)) are aimed at NVIDIA GPUs. On a Mac, GGUF is the safer choice.
+
+**Speed.** Panels are generated at about 1 MP (`--megapixels`, or *Settings → Panel resolution*) and shrunk to the 800 px strip width. Going higher mostly costs time. Use *Test the image model* to see how long one image takes on your machine before starting a long chapter.
+
+**Planner.** The Claude planner runs in the cloud and uses no local memory. If you use a local LLM through Ollama on the same Mac, set `OLLAMA_KEEP_ALIVE=0` so Ollama unloads the model after storyboarding instead of holding memory while ComfyUI draws.
+
+### Other backends
 
 | Backend | When | Example |
 |---|---|---|
-| `diffusers` (default) | Weights on this machine (GPU) | `--image-backend diffusers --image-model /models/qwen-image-2.1` (or a Hugging Face repo id) |
-| `openai` | You serve it behind an OpenAI-style `/v1/images/generations` API (vLLM-Omni, LocalAI, your own FastAPI…) | `--image-backend openai --image-base-url http://gpu-box:8000/v1 --image-model qwen-image-2.1` (optional `IMAGE_API_KEY`) |
+| `diffusers` | A diffusers-format model folder (Qwen-Image 1.x); needs `pip install torch diffusers transformers accelerate` | `--image-backend diffusers --image-model /models/Qwen-Image` (or a Hugging Face repo id) |
+| `openai` | You serve the model behind an OpenAI-style `/v1/images/generations` API (vLLM-Omni, LocalAI, your own FastAPI…) | `--image-backend openai --image-base-url http://gpu-box:8000/v1 --image-model qwen-image-2.1` (optional `IMAGE_API_KEY`) |
 | `dashscope` | Alibaba Cloud Model Studio | `--image-backend dashscope --image-model <model name>` with `DASHSCOPE_API_KEY` set (`--image-base-url` to use a different region endpoint) |
 | `mock` | Testing without a GPU | draws placeholder panels |
 
-Other knobs: `--steps`, `--cfg` (passed as `true_cfg_scale`), `--style`, `--negative`, `--width`, `--font`. Set `WEBTOON_CPU_OFFLOAD=1` to use diffusers CPU offload if VRAM is tight.
+Other knobs: `--steps`, `--cfg`, `--megapixels`, `--style`, `--negative`, `--width`, `--font`. For diffusers, set `WEBTOON_CPU_OFFLOAD=1` to use CPU offload if VRAM is tight.
 
 **Character references (`--use-references`).** Turn this on if your model or server accepts input images (Qwen-Image-Edit-style pipelines, `/images/edits`, or DashScope image inputs). Each panel is then conditioned on the sheets of the characters in it, which gives the strongest likeness. If it's off, consistency comes from the locked text descriptions alone.
 
@@ -134,4 +183,5 @@ The tests use canned plans, the mock image backend and the mock planner. They co
 
 - **Character continuity.** Chapter 2 keeps chapter 1's designs even when the planner tries to redesign someone, resolves aliases (`Mimi` → `Mira Han`) and applies outfit changes.
 - **Long chapters.** Splitting loses no words, skipped paragraphs and dialogue are detected, retries fill the gaps, stubborn gaps are patched in story order, and saved segments are reused on resume.
-- **The interactive app.** A full session driven through a pseudo-terminal.
+- **The interactive app.** A full session and the ComfyUI setup flow, driven through a pseudo-terminal.
+- **ComfyUI backend.** Detection of the three model files, linking, the Qwen-Image 2.1 graph (with reference images), custom-workflow placeholders, and the HTTP round trip against a fake ComfyUI server. The generated graph was also checked against a real ComfyUI with ComfyUI-GGUF: the server accepted it, and only failed when it tried to load the stand-in model files.

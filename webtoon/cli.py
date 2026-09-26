@@ -20,10 +20,20 @@ from .project import ProjectDir
 
 def _add_settings_args(p: argparse.ArgumentParser) -> None:
     g = p.add_argument_group("image model (Qwen-Image)")
-    g.add_argument("--image-backend", choices=["diffusers", "openai", "dashscope", "mock"])
+    g.add_argument("--image-backend", choices=["comfyui", "diffusers", "openai", "dashscope", "mock"])
+    g.add_argument("--model-dir", help="Folder with the Qwen-Image 2.1 files (comfyui): the three files are detected")
+    g.add_argument("--diffusion-model", help="comfyui: diffusion model file (.gguf / .safetensors)")
+    g.add_argument("--text-encoder", help="comfyui: text encoder file (e.g. qwen3vl_8b_bf16.safetensors)")
+    g.add_argument("--vae", help="comfyui: VAE file")
+    g.add_argument("--comfy-dir", help="comfyui: local ComfyUI folder (files get linked in, server auto-started)")
+    g.add_argument("--comfy-args", help='comfyui: extra ComfyUI launch arguments, e.g. "--lowvram"')
+    g.add_argument("--sampler")
+    g.add_argument("--scheduler")
+    g.add_argument("--workflow", help="comfyui: custom API-format workflow JSON with {{placeholders}}")
     g.add_argument("--image-model", help="HF repo id / local path (diffusers) or model name (servers)")
     g.add_argument("--image-base-url", help="Server URL for the openai/dashscope backends")
     g.add_argument("--steps", type=int)
+    g.add_argument("--megapixels", type=float, help="Panel resolution in megapixels (default 1.0)")
     g.add_argument("--cfg", type=float)
     g.add_argument("--use-references", action=argparse.BooleanOptionalAction,
                    help="Feed character sheets to an edit-capable model as image references")
@@ -45,13 +55,24 @@ def _apply_settings(project, args) -> None:
     mapping = {
         "image_backend": (project.image, "backend"), "image_model": (project.image, "model"),
         "image_base_url": (project.image, "base_url"), "steps": (project.image, "steps"),
-        "cfg": (project.image, "cfg"), "use_references": (project.image, "use_references"),
+        "cfg": (project.image, "cfg"), "megapixels": (project.image, "megapixels"), "use_references": (project.image, "use_references"),
         "planner": (project.planner, "provider"), "planner_model": (project.planner, "model"),
         "planner_base_url": (project.planner, "base_url"), "segment_words": (project.planner, "segment_words"), "density": (project.planner, "panels_per_1000_words"),
         "retries": (project.planner, "max_retries"),
         "style": (project, "style"), "negative": (project, "negative_prompt"), "width": (project, "width"),
         "font": (project, "font"),
+        "diffusion_model": (project.image, "diffusion_model"), "text_encoder": (project.image, "text_encoder"),
+        "vae": (project.image, "vae"), "comfy_dir": (project.image, "comfy_dir"),
+        "comfy_args": (project.image, "comfy_args"),
+        "sampler": (project.image, "sampler"), "scheduler": (project.image, "scheduler"),
+        "workflow": (project.image, "workflow_file"),
     }
+    if getattr(args, "model_dir", None):
+        from .comfyui import detect_model_files
+
+        for kind, path in detect_model_files(Path(args.model_dir)).items():
+            if path is not None and getattr(args, kind, None) is None:
+                setattr(project.image, kind, str(path.resolve()))
     for arg, (obj, field) in mapping.items():
         value = getattr(args, arg, None)
         if value is not None:

@@ -37,7 +37,7 @@ def test_interactive_session(tmp_path):
     step("Project", ENTER)  # create a new project
     step("Story title", "Test Story" + ENTER)
     step("Where should the project live", ENTER)
-    step("How do you run Qwen-Image", DOWN * 3 + ENTER)  # mock
+    step("How do you run Qwen-Image", DOWN * 4 + ENTER)  # mock
     step("Which LLM", DOWN * 2 + ENTER)  # mock planner
     step("Save these model settings", ENTER)
     step("What do you want to do", ENTER)  # add chapter 1
@@ -54,7 +54,7 @@ def test_interactive_session(tmp_path):
     child.send(BACKSPACE * 3 + "2, 4-5" + ENTER)
     step("Open it in your browser", "n")
     step("What do you want to do", DOWN * 5 + ENTER)  # settings
-    step("Settings", DOWN * 5 + ENTER)  # segment size
+    step("Settings", DOWN * 6 + ENTER)  # segment size
     step("Words per segment", BACKSPACE * 6 + "500" + ENTER)
     step("Settings", UP + ENTER)  # back
     step("What do you want to do", UP + ENTER)  # quit
@@ -70,3 +70,44 @@ def test_interactive_session(tmp_path):
     assert (project / "chapter_01" / "reader.html").exists()
     defaults = json.loads((tmp_path / "app.json").read_text())["defaults"]
     assert defaults["image"]["backend"] == "mock"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="needs a pty")
+def test_comfyui_setup_detects_model_files(tmp_path):
+    models = tmp_path / "qwen-image-2.1"
+    models.mkdir()
+    for name in ("qwen-image-2.1-UC-BF16.gguf", "qwen3vl_8b_bf16.safetensors", "qwen_image_2.1_vae_bf16.safetensors"):
+        (models / name).write_bytes(b"x")
+    env = dict(os.environ, WEBTOON_CONFIG=str(tmp_path / "app.json"), PYTHONPATH=str(ROOT), BROWSER="true")
+    child = pexpect.spawn(sys.executable, ["-m", "webtoon"], cwd=str(tmp_path), env=env, encoding="utf-8",
+                          timeout=60, dimensions=(50, 160))
+
+    def step(prompt, keys):
+        child.expect(prompt)
+        child.send(keys)
+
+    step("Project", ENTER)
+    step("Story title", "Comfy Story" + ENTER)
+    step("Where should the project live", ENTER)
+    step("How do you run Qwen-Image", ENTER)  # comfyui (default)
+    step("Folder with your Qwen-Image 2.1 model files", str(models))
+    child.send(ENTER)
+    child.expect("qwen3vl_8b_bf16.safetensors")  # detection table
+    step("Use these files", ENTER)
+    step("Your ComfyUI folder", ENTER)  # run ComfyUI yourself
+    step("ComfyUI address", ENTER)
+    step("official Qwen-Image 2.1 sampling settings", ENTER)
+    step("reference sheet", ENTER)
+    step("Generate a test image now", ENTER)  # default: no
+    step("Which LLM", DOWN * 2 + ENTER)
+    step("Save these model settings", ENTER)
+    child.expect("Qwen-Image 2.1 via ComfyUI: qwen-image-2.1-UC-BF16.gguf")
+    step("What do you want to do", UP + ENTER)  # quit
+    child.expect(pexpect.EOF)
+
+    img = json.loads((tmp_path / "comfy_story" / "story.json").read_text())["image"]
+    assert img["backend"] == "comfyui"
+    assert img["diffusion_model"] == str((models / "qwen-image-2.1-UC-BF16.gguf").resolve())
+    assert img["text_encoder"].endswith("qwen3vl_8b_bf16.safetensors")
+    assert img["vae"].endswith("qwen_image_2.1_vae_bf16.safetensors")
+    assert (img["steps"], img["cfg"], img["use_references"]) == (25, 1.0, True)

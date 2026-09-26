@@ -2,6 +2,8 @@
 
 All backends implement `generate(prompt, negative, width, height, seed, references) -> PIL.Image`.
 
+- comfyui   : a ComfyUI server (auto-started locally) running Qwen-Image 2.1 from split
+              checkpoint files (.gguf / .safetensors). See comfyui.py.
 - diffusers : run the model locally from a Hugging Face repo id or a local folder.
 - openai    : any server exposing an OpenAI-style /v1/images/generations endpoint
               (vLLM-Omni, LocalAI, a custom FastAPI wrapper, ...).
@@ -23,17 +25,31 @@ from PIL import Image, ImageDraw
 
 from .models import ImageSettings
 
-# Resolutions Qwen-Image is trained on, picked per camera shot.
-SHOT_SIZES = {
-    "establishing": (1664, 928),
-    "wide": (1584, 1056),
-    "medium": (1328, 1328),
-    "close-up": (1328, 1328),
-    "extreme-close-up": (1664, 928),
-    "over-the-shoulder": (1140, 1472),
-    "action": (1056, 1584),
+# Aspect ratio (width / height) per camera shot. Panels are generated at about
+# ImageSettings.megapixels and shrunk to the strip width (800px) afterwards, so ~1 MP
+# (Qwen-Image 2.1's native default) is plenty; raise it for print-quality art.
+SHOT_ASPECTS = {
+    "establishing": 16 / 9,
+    "wide": 3 / 2,
+    "medium": 1.0,
+    "close-up": 1.0,
+    "extreme-close-up": 16 / 9,
+    "over-the-shoulder": 4 / 5,
+    "action": 2 / 3,
 }
-PORTRAIT_SIZE = (1140, 1472)
+PORTRAIT_ASPECT = 4 / 5
+
+
+def size_for_aspect(aspect: float, megapixels: float = 1.0) -> tuple[int, int]:
+    """Width/height near the requested pixel count, both multiples of 32."""
+    pixels = max(0.25, megapixels) * 1024 * 1024
+    width = round((pixels * aspect) ** 0.5 / 32) * 32
+    height = round((pixels / aspect) ** 0.5 / 32) * 32
+    return max(256, width), max(256, height)
+
+
+def portrait_size(megapixels: float = 1.0) -> tuple[int, int]:
+    return size_for_aspect(PORTRAIT_ASPECT, megapixels)
 
 
 class ImageBackend:
@@ -69,7 +85,18 @@ class DiffusersBackend(ImageBackend):
         self.settings = settings
         device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
         dtype = torch.bfloat16 if device == "cuda" else torch.float32
-        self.pipe = DiffusionPipeline.from_pretrained(settings.model, torch_dtype=dtype)
+        model = Path(settings.model).expanduser()
+        if model.is_file() or (model.is_dir() and not (model / "model_index.json").exists()):
+            raise ValueError(
+                f"{settings.model} is not a diffusers model folder (no model_index.json). Single-file checkpoints "
+                "(.gguf / .safetensors, e.g. Qwen-Image 2.1) need the 'comfyui' backend."
+            )
+        import diffusers.utils as dutils
+
+        # newer diffusers renamed torch_dtype -> dtype (and warn on the old name)
+        new_api = hasattr(getattr(dutils, "deprecation_utils", None), "_resolve_dtype")
+        dtype_kwarg = {"dtype": dtype} if new_api else {"torch_dtype": dtype}
+        self.pipe = DiffusionPipeline.from_pretrained(settings.model, **dtype_kwarg)
         if device == "cuda" and os.environ.get("WEBTOON_CPU_OFFLOAD"):
             self.pipe.enable_model_cpu_offload()
         else:
@@ -208,8 +235,15 @@ class MockBackend(ImageBackend):
         return img
 
 
+def _comfyui_backend(settings: ImageSettings) -> ImageBackend:
+    from .comfyui import ComfyUIBackend
+
+    return ComfyUIBackend(settings)
+
+
 def make_backend(settings: ImageSettings) -> ImageBackend:
     backends = {
+        "comfyui": _comfyui_backend,
         "diffusers": DiffusersBackend,
         "openai": OpenAICompatibleBackend,
         "dashscope": DashScopeBackend,
@@ -220,5 +254,5 @@ def make_backend(settings: ImageSettings) -> ImageBackend:
     return backends[settings.backend](settings)
 
 
-def size_for_shot(shot: Optional[str]) -> tuple[int, int]:
-    return SHOT_SIZES.get(shot or "medium", SHOT_SIZES["medium"])
+def size_for_shot(shot: Optional[str], megapixels: float = 1.0) -> tuple[int, int]:
+    return size_for_aspect(SHOT_ASPECTS.get(shot or "medium", 1.0), megapixels)

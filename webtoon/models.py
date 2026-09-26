@@ -103,12 +103,24 @@ class ChapterRecord(BaseModel):
 
 
 class ImageSettings(BaseModel):
-    backend: str = "diffusers"  # diffusers | openai | dashscope | mock
-    model: str = "Qwen/Qwen-Image-2.1"
-    base_url: Optional[str] = None
-    steps: int = 40
-    cfg: float = 4.0
-    use_references: bool = False  # pass character sheets as image conditioning (edit-capable backends only)
+    backend: str = "comfyui"  # comfyui | diffusers | openai | dashscope | mock
+    model: str = "qwen-image-2.1"  # diffusers folder / repo id, or model name on a server
+    base_url: Optional[str] = None  # server URL (comfyui default: http://127.0.0.1:8188)
+    steps: int = 25
+    cfg: float = 1.0
+    use_references: bool = True  # pass character sheets as image conditioning (edit-capable backends only)
+    megapixels: float = 1.0  # panel resolution; panels are shrunk to the strip width afterwards
+
+    # --- comfyui backend (Qwen-Image 2.1 split checkpoints: .gguf / .safetensors) ---
+    diffusion_model: Optional[str] = None  # e.g. .../qwen-image-2.1-UC-BF16.gguf
+    text_encoder: Optional[str] = None  # e.g. .../qwen3vl_8b_bf16.safetensors
+    vae: Optional[str] = None  # e.g. .../qwen_image_2.1_vae_bf16.safetensors
+    comfy_dir: Optional[str] = None  # local ComfyUI install: model files get linked in, server auto-started
+    auto_start: bool = True
+    comfy_args: str = ""  # extra ComfyUI launch arguments, e.g. "--lowvram"
+    sampler: str = "euler"
+    scheduler: str = "simple"
+    workflow_file: Optional[str] = None  # optional custom API-format workflow with {{placeholders}}
 
 
 class PlannerSettings(BaseModel):
