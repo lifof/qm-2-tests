@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import subprocess
 import time
 import webbrowser
@@ -23,7 +24,9 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from .comfyui import GGUF_REPO, MODEL_SUBDIRS, comfy_python, detect_model_files, memory_report
+from .comfyui import (GGUF_REPO, MODEL_SUBDIRS, comfy_python, detect_model_files, memory_report,
+                      system_memory_gb)
+from .llm_server import PlannerSession, find_llama_server, llm_file_warning
 from .image_backends import make_backend, portrait_size
 from .models import Project
 from .pipeline import assemble_step, ensure_reference_sheets, plan_step, render_step
@@ -44,7 +47,8 @@ IMAGE_BACKENDS = {
 }
 PLANNERS = {
     "anthropic": "Claude (Anthropic API)",
-    "openai": "OpenAI-compatible chat server (e.g. a local Qwen LLM on vLLM / Ollama / LM Studio)",
+    "llamacpp": "A local GGUF model with llama.cpp - loaded only while storyboarding, unloaded before drawing",
+    "openai": "An OpenAI-compatible chat server you run yourself (Ollama, LM Studio, vLLM...)",
     "mock": "No LLM: one caption panel per paragraph (for testing)",
 }
 API_KEYS = {
@@ -178,7 +182,8 @@ class App:
     def main_menu(self) -> bool:
         p = self.project
         next_n = max((c.number for c in p.chapters), default=0) + 1
-        choices = [Choice(f"Add chapter {next_n}", "add")]
+        choices = [Choice(f"Add chapter {next_n}", "add"),
+                   Choice("Add several chapters (storyboard all, then draw all)", "batch")]
         if p.chapters:
             choices += [Choice("Draw / redraw a chapter", "render"), Choice("Review a chapter's storyboard", "review"),
                         Choice("Open a chapter in the browser", "open")]
@@ -196,7 +201,7 @@ class App:
         if action == "quit":
             return False
         {
-            "add": self.add_chapter, "render": self.render_chapter, "review": self.review_chapter,
+            "add": self.add_chapter, "batch": self.add_chapters, "render": self.render_chapter, "review": self.review_chapter,
             "open": self.open_reader, "chars": self.characters_menu, "settings": self.settings_menu,
             "test_image": self.test_image, "test_planner": self.test_planner, "switch": self.choose_project,
         }[action]()
@@ -214,7 +219,10 @@ class App:
             rows.add_row("Image model", f"Qwen-Image 2.1 via ComfyUI: {Path(img.diffusion_model or '-').name}  [dim]{where}[/]")
         else:
             rows.add_row("Image model", f"{img.backend}: {img.model}" + (f"  @ {img.base_url}" if img.base_url else ""))
-        rows.add_row("Planner", f"{pl.provider}: {pl.model}" + (f"  @ {pl.base_url}" if pl.base_url else ""))
+        if pl.provider == "llamacpp":
+            rows.add_row("Planner", f"llama.cpp: {escape(pl.model)}  [dim]loaded only while storyboarding[/]")
+        else:
+            rows.add_row("Planner", f"{pl.provider}: {pl.model}" + (f"  @ {pl.base_url}" if pl.base_url else ""))
         rows.add_row("Chapters", ", ".join(f"{c.number}. {c.title}" for c in p.chapters) or "none yet")
         warnings = self.config_warnings()
         if warnings:
@@ -251,6 +259,15 @@ class App:
             w.append("ANTHROPIC_API_KEY is not set (fine if you used `ant auth login`)")
         if p.planner.provider == "openai" and not p.planner.base_url:
             w.append("planner server URL is not set")
+        if p.planner.provider == "llamacpp":
+            if not p.planner.llm_model or not Path(p.planner.llm_model).expanduser().is_file():
+                w.append("storyboard LLM .gguf file is not set / not found (Settings > Planner)")
+            elif not find_llama_server(p.planner.llama_server):
+                w.append("llama-server not found (Settings > Planner)")
+            else:
+                warning = llm_file_warning(p.planner.llm_model, system_memory_gb())
+                if warning:
+                    w.append(warning)
         if p.planner.provider == "mock":
             w.append("planner is 'mock' (test mode): every paragraph just becomes a caption. Choose Claude or a "
                      "local LLM in Settings for a real storyboard")
@@ -466,6 +483,8 @@ class App:
             pl.base_url = None
             if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
                 self._ensure_key("ANTHROPIC_API_KEY", optional=True)
+        elif provider == "llamacpp":
+            self.configure_llamacpp()
         elif provider == "openai":
             self.console.print(
                 "[dim]Local LLM tips (e.g. Ollama on a Mac): use a model that is good at long JSON, such as "
@@ -477,6 +496,39 @@ class App:
                                     validate=lambda v: v.startswith("http") or "Must start with http").strip()
             pl.model = self.text("Model name on the server:", pl.model or "qwen3:30b",
                                  validate=lambda v: bool(v.strip()) or "Required").strip()
+        self.save()
+
+    def configure_llamacpp(self) -> None:
+        pl = self.project.planner
+        self.console.print("[dim]The app starts llama-server with this model when it storyboards, and stops it before "
+                           "drawing, so the LLM and Qwen-Image never need memory at the same time.[/]")
+        model = self.path("Your LLM's .gguf file:", pl.llm_model or "",
+                          validate=lambda v: (Path(v).expanduser().is_file() and v.lower().endswith(".gguf"))
+                          or "Pick a .gguf file")
+        pl.llm_model = str(Path(model).expanduser().resolve())
+        pl.model = Path(pl.llm_model).name
+        size = Path(pl.llm_model).stat().st_size / 1024 ** 3
+        self.console.print(f"[dim]{escape(pl.model)}: {size:.1f} GB[/]")
+        warning = llm_file_warning(pl.llm_model, system_memory_gb())
+        if warning:
+            self.console.print(Panel(escape(warning), title="Memory", border_style="yellow"))
+        found = find_llama_server(pl.llama_server)
+        if found:
+            self.console.print(f"[dim]Using llama-server at {escape(found)}[/]")
+            pl.llama_server = found
+        else:
+            self.console.print("[yellow]llama-server wasn't found on your PATH.[/]")
+            server = self.path("Path to the llama-server binary (from your llama.cpp build or `brew install llama.cpp`):",
+                               validate=lambda v: Path(v).expanduser().is_file() or "File not found")
+            pl.llama_server = str(Path(server).expanduser().resolve())
+        pl.llm_context = self.number("Context size in tokens (32768 fits a ~1200-word segment with room to spare):",
+                                     pl.llm_context)
+        pl.llm_args = self.text("Extra llama-server arguments (the default turns thinking off: faster, more reliable "
+                                "JSON):", pl.llm_args).strip()
+        current_port = re.search(r":(\d+)", pl.base_url or "")
+        port = self.text("Port for llama-server:", current_port.group(1) if current_port else "8080",
+                         validate=lambda v: v.isdigit() or "Enter a port number")
+        pl.base_url = f"http://127.0.0.1:{port}/v1"
         self.save()
 
     def _ensure_key(self, name: str, optional: bool = False) -> None:
@@ -616,7 +668,14 @@ class App:
         self.console.print(message, markup=False, highlight=False)
 
     # ------------------------------------------------------------------ chapters
-    def add_chapter(self) -> None:
+    def release_image_model(self) -> None:
+        """Stop the ComfyUI this app started, so the storyboard LLM gets the memory."""
+        backend, self._backend, self._backend_key = self._backend, None, ""
+        if backend is not None and getattr(backend, "process", None) is not None:
+            self.log("Stopping ComfyUI to free memory for storyboarding.")
+            backend.shutdown()
+
+    def planner_ready(self) -> bool:
         p = self.project
         if p.planner.provider == "mock":
             self.console.print(Panel(
@@ -628,11 +687,16 @@ class App:
                                                Choice("Continue with the mock planner anyway", "mock"),
                                                Choice("Cancel", "cancel")])
             if choice == "cancel":
-                return
+                return False
             if choice == "setup":
                 self.configure_planner()
-                if p.planner.provider == "mock":
-                    return
+                return p.planner.provider != "mock"
+        return True
+
+    def add_chapter(self) -> None:
+        p = self.project
+        if not self.planner_ready():
+            return
         next_n = max((c.number for c in p.chapters), default=0) + 1
         file = self.path("Chapter text file:", validate=lambda v: Path(v).expanduser().is_file() or "File not found")
         file_path = Path(file).expanduser().resolve()
@@ -665,7 +729,8 @@ class App:
             return
         redo = any(c.number == number for c in p.chapters)
         started = time.time()
-        plan_step(self.pdir, p, file_path, number, log=self.log)
+        self.release_image_model()
+        plan_step(self.pdir, p, file_path, number, log=self.log)  # the LLM is unloaded again when this returns
         self.show_coverage(number)
         if how == "plan":
             self.console.print(f"Storyboard saved to [bold]{self.pdir.chapter_dir(number) / 'plan.json'}[/]. "
@@ -673,7 +738,61 @@ class App:
             return
         render_step(self.pdir, p, number, force=redo, backend=self.backend(), log=self.log)
         self.console.print(f"[green]Done in {time.time() - started:.0f}s.[/]")
-        self.offer_open(number)
+        self.show_result(number)
+
+    def add_chapters(self) -> None:
+        """Storyboard several chapters with one LLM session, then draw them all with one image-model session."""
+        p = self.project
+        if not self.planner_ready():
+            return
+        folder = Path(self.path("Folder with the chapter .txt files:", str(self.pdir.root), only_directories=True,
+                                validate=lambda v: Path(v).expanduser().is_dir() or "Folder not found")).expanduser()
+        files = sorted(folder.glob("*.txt"), key=lambda f: [int(t) if t.isdigit() else t.lower()
+                                                            for t in re.split(r"(\d+)", f.name)])
+        if not files:
+            self.console.print("No .txt files in that folder.")
+            return
+        done = {Path(c.source_file).resolve() for c in p.chapters}
+        picked = self._ask(questionary.checkbox(
+            "Chapters to add, in order (space toggles, enter confirms):",
+            choices=[Choice(f.name, f, checked=f.resolve() not in done) for f in files], **self.prompt_kwargs))
+        if not picked:
+            return
+        first = self.number("Number of the first one:", max((c.number for c in p.chapters), default=0) + 1)
+        numbered = list(zip(range(first, first + len(picked)), picked))
+        table = Table("Chapter", "File", "Words", box=None)
+        texts = {}
+        for number, f in numbered:
+            try:
+                texts[f] = read_chapter(f)[0]
+            except ChapterFileError as exc:
+                self.console.print(Panel(escape(str(exc)), title="Can't read a chapter file", border_style="red"))
+                return
+            table.add_row(str(number), f.name, f"{len(texts[f].split()):,}")
+        self.console.print(table)
+        how = self.select("Go?", [Choice("Storyboard all, then draw all", "all"),
+                                  Choice("Storyboard all only (review before drawing)", "plan"),
+                                  Choice("Cancel", "cancel")])
+        if how == "cancel":
+            return
+        redo = {n for n, _ in numbered if any(c.number == n for c in p.chapters)}
+        started = time.time()
+        self.release_image_model()
+        self.console.rule("Phase 1: storyboarding")
+        with PlannerSession(p, self.log) as session:  # the LLM stays loaded across all chapters
+            for number, f in numbered:
+                plan_step(self.pdir, p, f, number, log=self.log, session=session)
+                self.show_coverage(number)
+        if how == "plan":
+            self.console.print(f"[green]Storyboarded {len(numbered)} chapter(s) in {time.time() - started:.0f}s.[/] "
+                               "Review them, then use 'Draw / redraw a chapter'.")
+            return
+        self.console.rule("Phase 2: drawing")
+        for number, _ in numbered:
+            render_step(self.pdir, p, number, force=number in redo, backend=self.backend(), log=self.log)
+        self.console.print(f"[green]Done: {len(numbered)} chapter(s) in {time.time() - started:.0f}s.[/]")
+        for number, _ in numbered:
+            self.show_result(number)
 
     def pick_chapter(self, message: str) -> int:
         return self.select(message, [Choice(f"{c.number}. {c.title}", c.number) for c in self.project.chapters]
@@ -706,7 +825,7 @@ class App:
                         backend=self.backend(), log=self.log)
         else:
             render_step(self.pdir, self.project, number, force=mode == "all", backend=self.backend(), log=self.log)
-        self.offer_open(number)
+        self.show_result(number)
 
     @staticmethod
     def _valid_panels(value: str, total: int):
@@ -753,12 +872,17 @@ class App:
                                f"caption panels - see {path}[/]")
 
     def open_reader(self) -> None:
-        self.offer_open(self.pick_chapter("Open which chapter?"), ask=False)
+        self.open_in_browser(self.pick_chapter("Open which chapter?"))
 
-    def offer_open(self, number: int, ask: bool = True) -> None:
+    def show_result(self, number: int) -> None:
+        """Say where the chapter is; opening it is left to the 'Open a chapter in the browser' menu item."""
         reader = self.pdir.chapter_dir(number) / "reader.html"
-        self.console.print(f"Reader: [bold]{reader}[/]")
-        if reader.exists() and (not ask or self.confirm("Open it in your browser?", default=True)):
+        self.console.print(f"Chapter {number}: [bold]{escape(str(reader))}[/]")
+
+    def open_in_browser(self, number: int) -> None:
+        reader = self.pdir.chapter_dir(number) / "reader.html"
+        self.console.print(f"Opening [bold]{escape(str(reader))}[/]")
+        if reader.exists():
             webbrowser.open(reader.resolve().as_uri())
 
     # ------------------------------------------------------------------ characters
@@ -820,8 +944,6 @@ class App:
             w, h = portrait_size(project.image.megapixels)
             backend.generate(prompt, project.negative_prompt, w, h, 1234).save(out)
         self.console.print(f"[green]Image model works[/] ({time.time() - started:.0f}s): {out}")
-        if self.confirm("Open it?", default=True):
-            webbrowser.open(out.resolve().as_uri())
 
     def test_planner(self) -> None:
         sample = ("Chapter 1 - Test\n\nAnna opened the door of the bakery. \"We're closed,\" said the old baker, "
@@ -829,8 +951,9 @@ class App:
         scratch = copy.deepcopy(self.project)
         scratch.characters, scratch.chapters = [], []
         started = time.time()
+        self.release_image_model()
         with self.console.status(f"Asking {scratch.planner.provider}: {scratch.planner.model} ..."):
-            plan, report = plan_chapter(scratch, sample, 1, log=lambda m: None)
+            plan, report = plan_chapter(scratch, sample, 1, log=self.log)
         self.console.print(f"[green]Planner works[/] ({time.time() - started:.0f}s): {len(plan.panels)} panels, "
                            f"characters: {', '.join(c.name for c in plan.new_characters) or '-'}")
         for i, panel in enumerate(plan.panels, 1):

@@ -38,7 +38,7 @@ def test_interactive_session(tmp_path):
     step("Story title", "Test Story" + ENTER)
     step("Where should the project live", ENTER)
     step("How do you run Qwen-Image", DOWN * 4 + ENTER)  # mock
-    step("Which LLM", DOWN * 2 + ENTER)  # mock planner
+    step("Which LLM", DOWN * 3 + ENTER)  # mock planner
     step("Save these model settings", ENTER)
     step("What do you want to do", ENTER)  # add chapter 1
     step("What now\\?", DOWN + ENTER)  # mock planner warning: continue anyway
@@ -46,15 +46,13 @@ def test_interactive_session(tmp_path):
     child.send(ENTER)
     step("Chapter number", ENTER)
     step("Go\\?", ENTER)  # storyboard and draw
-    step("Open it in your browser", "n")
-    step("What do you want to do", DOWN + ENTER)  # draw / redraw
+    step("What do you want to do", DOWN * 2 + ENTER)  # draw / redraw
     step("Which chapter", ENTER)
     step("Draw what", DOWN + ENTER)  # specific panels
     step("Panel numbers", "999" + ENTER)
     child.expect("No such panel")
     child.send(BACKSPACE * 3 + "2, 4-5" + ENTER)
-    step("Open it in your browser", "n")
-    step("What do you want to do", DOWN * 5 + ENTER)  # settings
+    step("What do you want to do", DOWN * 6 + ENTER)  # settings
     step("Settings", DOWN * 6 + ENTER)  # segment size
     step("Words per segment", BACKSPACE * 6 + "500" + ENTER)
     step("Settings", UP + ENTER)  # back
@@ -100,7 +98,7 @@ def test_comfyui_setup_detects_model_files(tmp_path):
     step("official Qwen-Image 2.1 sampling settings", ENTER)
     step("reference sheet", ENTER)
     step("Generate a test image now", ENTER)  # default: no
-    step("Which LLM", DOWN * 2 + ENTER)
+    step("Which LLM", DOWN * 3 + ENTER)
     step("Save these model settings", ENTER)
     child.expect("Qwen-Image 2.1 via ComfyUI: qwen-image-2.1-UC-BF16.gguf")
     step("What do you want to do", UP + ENTER)  # quit
@@ -181,7 +179,7 @@ def test_declined_setup_is_offered_again_before_drawing(tmp_path):
         child.send(keys)
 
     step("Set up ComfyUI for this project now", "n")  # decline at startup
-    step("What do you want to do", DOWN * 3 + ENTER)  # Test the image model
+    step("What do you want to do", DOWN * 4 + ENTER)  # Test the image model
     step("Set up ComfyUI for this project now", ENTER)  # offered again instead of a ValueError
     step("Folder with your Qwen-Image 2.1 model files", ENTER)
     step("Use these files", ENTER)
@@ -195,3 +193,55 @@ def test_declined_setup_is_offered_again_before_drawing(tmp_path):
     step("What do you want to do", UP + ENTER)
     child.expect(pexpect.EOF)
     assert json.loads((project / "story.json").read_text())["image"]["backend"] == "comfyui"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="needs a pty")
+def test_batch_storyboards_all_then_draws_all(tmp_path):
+    import stat
+
+    from test_llamacpp import FAKE_SERVER, free_port, port_open
+
+    from webtoon.cli import main as cli_main
+
+    server = tmp_path / "llama-server"
+    server.write_text(FAKE_SERVER.replace("{python}", sys.executable))
+    server.chmod(server.stat().st_mode | stat.S_IEXEC)
+    model = tmp_path / "Qwen3-27B-Q4_K_M.gguf"
+    model.write_bytes(b"gguf")
+    port = free_port()
+    project = tmp_path / "story"
+    cli_main(["init", str(project), "--planner", "llamacpp", "--llm-model", str(model), "--llama-server", str(server),
+              "--planner-base-url", f"http://127.0.0.1:{port}/v1", "--image-backend", "mock"])
+    for n in (1, 2, 10):  # natural order: 1, 2, 10
+        (project / f"Chapter{n}.txt").write_text(f"Chapter {n}\n\n" + "\n\n".join(
+            f"Jason explored part {i} of the maze." for i in range(4)))
+    log = tmp_path / "llama.log"
+    env = dict(os.environ, WEBTOON_CONFIG=str(tmp_path / "app.json"), PYTHONPATH=f"{ROOT}:{ROOT / 'tests'}",
+               BROWSER="true", FAKE_LLAMA_LOG=str(log))
+    child = pexpect.spawn(sys.executable, ["-m", "webtoon", "app", str(project)], cwd=str(tmp_path), env=env,
+                          encoding="utf-8", timeout=90, dimensions=(50, 160))
+
+    def step(prompt, keys):
+        child.expect(prompt)
+        child.send(keys)
+
+    child.expect("loaded only while storyboarding")
+    step("What do you want to do", DOWN + ENTER)  # add several chapters
+    step("Folder with the chapter .txt files", ENTER)  # defaults to the project folder
+    child.expect("Chapter10.txt")
+    step("Chapters to add", ENTER)  # all pre-selected
+    step("Number of the first one", ENTER)
+    step("Go\\?", ENTER)  # storyboard all, then draw all
+    child.expect("storyboarding")
+    child.expect("Starting the storyboard LLM")
+    child.expect("Stopping the storyboard LLM")
+    child.expect("drawing")
+    step("What do you want to do", UP + ENTER)  # quit
+    child.expect(pexpect.EOF)
+
+    state = json.loads((project / "story.json").read_text())
+    assert [(c["number"], Path(c["source_file"]).name) for c in state["chapters"]] == [
+        (1, "Chapter1.txt"), (2, "Chapter2.txt"), (3, "Chapter10.txt")]
+    assert log.read_text().count("start ") == 1  # one LLM load for all three chapters
+    assert not port_open(port)
+    assert all((project / f"chapter_0{n}" / "reader.html").exists() for n in (1, 2, 3))

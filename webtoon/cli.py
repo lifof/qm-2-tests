@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from .models import ChapterPlan
+from .llm_server import PlannerSession
 from .pipeline import assemble_step, plan_step, render_step
 from .project import ProjectDir
 
@@ -38,7 +39,11 @@ def _add_settings_args(p: argparse.ArgumentParser) -> None:
     g.add_argument("--use-references", action=argparse.BooleanOptionalAction,
                    help="Feed character sheets to an edit-capable model as image references")
     g = p.add_argument_group("planner (LLM that storyboards the chapter)")
-    g.add_argument("--planner", choices=["anthropic", "openai", "mock"])
+    g.add_argument("--planner", choices=["anthropic", "llamacpp", "openai", "mock"])
+    g.add_argument("--llm-model", help="llamacpp: the storyboard LLM's .gguf file")
+    g.add_argument("--llama-server", help="llamacpp: path to the llama-server binary (default: found on PATH)")
+    g.add_argument("--llm-context", type=int, help="llamacpp: context size (default 32768)")
+    g.add_argument("--llm-args", help='llamacpp: extra llama-server arguments (default "--reasoning off")')
     g.add_argument("--planner-model")
     g.add_argument("--planner-base-url", help="For --planner openai: e.g. http://localhost:11434/v1")
     g.add_argument("--segment-words", type=int, help="Long chapters are storyboarded in parts of ~N words (default 1200)")
@@ -59,6 +64,8 @@ def _apply_settings(project, args) -> None:
         "planner": (project.planner, "provider"), "planner_model": (project.planner, "model"),
         "planner_base_url": (project.planner, "base_url"), "segment_words": (project.planner, "segment_words"), "density": (project.planner, "panels_per_1000_words"),
         "retries": (project.planner, "max_retries"),
+        "llm_model": (project.planner, "llm_model"), "llama_server": (project.planner, "llama_server"),
+        "llm_context": (project.planner, "llm_context"), "llm_args": (project.planner, "llm_args"),
         "style": (project, "style"), "negative": (project, "negative_prompt"), "width": (project, "width"),
         "font": (project, "font"),
         "diffusion_model": (project.image, "diffusion_model"), "text_encoder": (project.image, "text_encoder"),
@@ -77,6 +84,8 @@ def _apply_settings(project, args) -> None:
         value = getattr(args, arg, None)
         if value is not None:
             setattr(obj, field, value)
+    if project.planner.provider == "llamacpp" and project.planner.llm_model:
+        project.planner.model = Path(project.planner.llm_model).name
 
 
 def _open(args, create: bool):
@@ -102,9 +111,10 @@ def main(argv=None) -> None:
     p.add_argument("--title")
     _add_settings_args(p)
 
-    p = sub.add_parser("chapter", help="Storyboard + render the next chapter")
+    p = sub.add_parser("chapter", help="Storyboard + render the next chapter(s)")
     p.add_argument("project")
-    p.add_argument("chapter_file", type=Path)
+    p.add_argument("chapter_file", type=Path, nargs="+",
+                   help="One or more chapter files: all are storyboarded first (one LLM session), then all are drawn")
     p.add_argument("--number", type=int, help="Chapter number (default: next one). Reuse a number to redo it.")
     p.add_argument("--plan-only", action="store_true", help="Stop after writing plan.json so you can edit it")
     p.add_argument("--plan-file", type=Path, help="Use an existing plan JSON instead of calling the planner")
@@ -142,14 +152,22 @@ def main(argv=None) -> None:
 
     elif args.cmd == "chapter":
         pdir, project = _open(args, create=True)
-        number = args.number or (max((c.number for c in project.chapters), default=0) + 1)
+        if len(args.chapter_file) > 1 and (args.number or args.plan_file):
+            sys.exit("--number and --plan-file work with a single chapter file")
+        first = args.number or (max((c.number for c in project.chapters), default=0) + 1)
+        numbers = list(range(first, first + len(args.chapter_file)))
         plan = ChapterPlan.model_validate_json(args.plan_file.read_text(encoding="utf-8")) if args.plan_file else None
-        plan_step(pdir, project, args.chapter_file, number, plan=plan)
+        # Phase 1: storyboard everything while the LLM is loaded; phase 2: draw with the image model.
+        with PlannerSession(project) as session:
+            for number, chapter_file in zip(numbers, args.chapter_file):
+                plan_step(pdir, project, chapter_file, number, plan=plan, session=session)
         if args.plan_only:
-            print(f"Plan written to {pdir.chapter_dir(number) / 'plan.json'}. Edit it, then run: "
-                  f"python -m webtoon render {pdir.root} {number}")
+            for number in numbers:
+                print(f"Plan written to {pdir.chapter_dir(number) / 'plan.json'}. Edit it, then run: "
+                      f"python -m webtoon render {pdir.root} {number}")
             return
-        render_step(pdir, project, number, force=args.number is not None)
+        for number in numbers:
+            render_step(pdir, project, number, force=args.number is not None)
 
     elif args.cmd == "render":
         pdir, project = _open(args, create=False)

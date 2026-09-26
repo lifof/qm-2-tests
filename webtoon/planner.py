@@ -19,6 +19,7 @@ from typing import Callable, List, Optional
 
 from pydantic import ValidationError
 
+from .llm_server import DEFAULT_LLAMA_URL, PlannerSession
 from .models import ChapterPlan, PanelPlan, PlannerSettings, Project
 from .project import apply_plan, bible_for_prompt, character_index
 from .segment import Segment, check_coverage, patch_gaps, split_segments, target_panels
@@ -95,12 +96,17 @@ def _retry_prompt(base: str, draft: ChapterPlan, problems: str) -> str:
 
 
 def plan_chapter(project: Project, chapter_text: str, chapter_number: int, cache_dir: Optional[Path] = None,
-                 log: Log = print) -> tuple[ChapterPlan, dict]:
+                 log: Log = print, session: Optional[PlannerSession] = None) -> tuple[ChapterPlan, dict]:
     """Plan a whole chapter segment by segment. Returns (plan, coverage report).
 
     Mutates `project` (character bible) as segments introduce characters, so later
     segments reuse them. Segment results are cached in `cache_dir` for resuming.
+    A local LLM is started on the first real planner call and stopped when the
+    session ends (pass a session to keep it loaded across several chapters).
     """
+    if session is None:
+        with PlannerSession(project, log) as own:
+            return plan_chapter(project, chapter_text, chapter_number, cache_dir, log, own)
     settings = project.planner
     segments = split_segments(chapter_text, settings.segment_words)
     heading = chapter_text.strip().splitlines()[0].strip() if chapter_text.strip() else ""
@@ -129,6 +135,8 @@ def plan_chapter(project: Project, chapter_text: str, chapter_number: int, cache
             base = _segment_prompt(project, seg, chapter_number, [p.summary for p in plans], all_panels,
                                    chapter_title or (plans[0].title if plans else ""))
             log(f"  segment {seg.index + 1}/{len(segments)} ({seg.words} words) ...")
+            if settings.provider != "mock":
+                session.ensure_ready()
             plan = _call_planner(settings, base, seg, project)
             coverage = check_coverage(seg, plan)
             attempts = 1
@@ -186,7 +194,7 @@ def _call_planner(settings: PlannerSettings, user: str, segment: Segment, projec
         return mock_plan(segment, project)
     if settings.provider == "anthropic":
         raw = _plan_with_claude(settings, user)
-    elif settings.provider == "openai":
+    elif settings.provider in ("openai", "llamacpp"):
         raw = _plan_with_openai_compatible(settings, user)
     else:
         raise ValueError(f"Unknown planner provider: {settings.provider}")
@@ -238,7 +246,9 @@ def _plan_with_openai_compatible(settings: PlannerSettings, user: str) -> str:
     """For a self-hosted LLM (e.g. a Qwen model behind vLLM / Ollama / LM Studio)."""
     from openai import BadRequestError, OpenAI
 
-    client = OpenAI(base_url=settings.base_url, api_key=os.environ.get("OPENAI_API_KEY", "not-needed"))
+    base_url = settings.base_url or (DEFAULT_LLAMA_URL if settings.provider == "llamacpp" else None)
+    # local models can take many minutes for a long storyboard
+    client = OpenAI(base_url=base_url, api_key=os.environ.get("OPENAI_API_KEY", "not-needed"), timeout=3600)
     schema = ChapterPlan.model_json_schema()
     messages = [
         {

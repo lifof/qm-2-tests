@@ -12,6 +12,7 @@ from PIL import Image
 from . import compose
 from .image_backends import ImageBackend, make_backend, portrait_size, size_for_shot
 from .models import ChapterPlan, ChapterRecord, Project
+from .llm_server import PlannerSession
 from .planner import plan_chapter
 from .project import ProjectDir, apply_plan, stable_seed
 from .prompts import panel_prompt, reference_sheet_prompt
@@ -21,14 +22,14 @@ Log = Callable[[str], None]
 
 
 def plan_step(pdir: ProjectDir, project: Project, chapter_file: Path, number: int, log: Log = print,
-              plan: Optional[ChapterPlan] = None) -> ChapterPlan:
+              plan: Optional[ChapterPlan] = None, session: Optional[PlannerSession] = None) -> ChapterPlan:
     if plan is None:
         log(f"Planning chapter {number} with {project.planner.provider}:{project.planner.model} ...")
         text, encoding = read_chapter(chapter_file)
         if encoding not in ("utf-8", "utf-8-sig"):
             log(f"  (read {chapter_file.name} as {encoding_label(encoding)})")
         plan, report = plan_chapter(project, text, number,
-                                    cache_dir=pdir.chapter_dir(number) / "segments", log=log)
+                                    cache_dir=pdir.chapter_dir(number) / "segments", log=log, session=session)
         pdir.chapter_dir(number).mkdir(parents=True, exist_ok=True)
         (pdir.chapter_dir(number) / "coverage.json").write_text(json.dumps(report, indent=2, ensure_ascii=False),
                                                                  encoding="utf-8")

@@ -124,9 +124,14 @@ class ImageSettings(BaseModel):
 
 
 class PlannerSettings(BaseModel):
-    provider: str = "anthropic"  # anthropic | openai
+    provider: str = "anthropic"  # anthropic | llamacpp | openai | mock
     model: str = "claude-opus-5"
     base_url: Optional[str] = None
+    # --- llamacpp: a local GGUF served by llama-server, started only while storyboarding ---
+    llm_model: Optional[str] = None  # path to the .gguf
+    llama_server: str = "llama-server"  # binary name on PATH, or its full path
+    llm_context: int = 32768
+    llm_args: str = "--reasoning off"  # extra llama-server arguments
     segment_words: int = 1200  # long chapters are storyboarded in segments of about this many words
     panels_per_1000_words: float = 10.0  # pacing; more panels = more faithful, slower to render
     max_retries: int = 2  # re-plans of a segment when the coverage check finds skipped text

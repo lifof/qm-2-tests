@@ -30,6 +30,7 @@ python -m webtoon            # or: pip install -e . && webtoon
 The app walks you through everything with arrow-key menus:
 
 - **Create or open a project.** Recent projects are remembered.
+- **Results.** Finished chapters are never opened automatically. The app prints where the reader page is, and *Open a chapter in the browser* opens one when you ask.
 - **Settings.** Pick how you run Qwen-Image (local model folder, your own server URL, DashScope or mock) and which LLM storyboards the chapters. You can also set steps, CFG, character references, segment size, pacing, art style, negative prompt, strip width and font. API keys can be entered for the session. Settings can be saved as defaults for new projects (`~/.config/webtoon/app.json`).
 - **Add chapter N.** Choose the text file. The app shows the word count, number of segments and estimated panels, then storyboards and draws the chapter, or storyboards only so you can edit `plan.json` first.
 - **Draw or redraw a chapter.** Draw missing panels, specific panels (`3, 7-9`), everything, or only redo the lettering.
@@ -155,7 +156,27 @@ Other knobs: `--steps`, `--cfg`, `--megapixels`, `--style`, `--negative`, `--wid
 
 The planner defaults to Claude (`claude-opus-5`) with structured JSON output. Set `ANTHROPIC_API_KEY`, or log in with `ant auth login`. Server-side refusal fallback is enabled, so a false-positive safety decline on a dark chapter is retried on another model instead of failing.
 
-To keep everything local, point it at any OpenAI-compatible chat server instead, for example a Qwen LLM on vLLM or Ollama:
+### Local LLM with llama.cpp (recommended on a Mac)
+
+A Mac can't hold a big LLM and Qwen-Image in memory at the same time, so the app has them take turns. Give it your GGUF file and it:
+
+1. asks ComfyUI to unload its models (or stops ComfyUI, if the app started it);
+2. starts `llama-server` with your model, but only if a segment actually needs storyboarding (already-storyboarded chapters don't trigger a load);
+3. storyboards, then **stops `llama-server`** before any drawing starts.
+
+```bash
+python -m webtoon init my_story --planner llamacpp \
+    --llm-model ~/models/your-27b-model-Q4_K_M.gguf       # llama-server is found on PATH (brew install llama.cpp)
+python -m webtoon chapter my_story Chapter1.txt Chapter2.txt Chapter3.txt
+```
+
+Several files are **all storyboarded first, with one LLM load, and then all drawn**, with one ComfyUI load. In the app, use *Add several chapters*.
+
+Defaults: `--llm-context 32768` and `--llm-args "--reasoning off"`. Thinking off makes storyboarding faster and the JSON more reliable. If your llama.cpp build is too old for that flag, the app retries without it. llama-server's output goes to `~/.cache/webtoon/llama-server.log`. A 27B model at Q4_K_M is about 16–17 GB, which is comfortable on 48 GB. The app warns you if a model file is too big for your Mac's GPU memory.
+
+### Other LLM servers
+
+To use another server you run yourself, point the app at any OpenAI-compatible chat server, for example a Qwen LLM on vLLM or Ollama:
 
 ```bash
 OLLAMA_CONTEXT_LENGTH=32768 OLLAMA_KEEP_ALIVE=0 ollama serve     # in another terminal
