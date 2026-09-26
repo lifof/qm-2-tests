@@ -102,6 +102,32 @@ def _draw_caption(img: Image.Image, text: str, font, max_width: int) -> int:
     return box[3] + 14
 
 
+SYSTEM_FILL = (14, 28, 64, 225)
+SYSTEM_BORDER = (110, 200, 255)
+SYSTEM_TEXT = (226, 240, 255)
+
+
+def _system_size(draw, text: str, font, max_width: int, pad: int = 22) -> tuple[str, int, int]:
+    lines = _wrap(draw, text.strip(), font, max_width - 2 * pad)
+    body = "\n".join(lines)
+    left, top, right, bottom = draw.multiline_textbbox((0, 0), body, font=font, spacing=8)
+    return body, right - left + 2 * pad, bottom - top + 2 * pad
+
+
+def _draw_system(img: Image.Image, y: int, text: str, font, max_width: int) -> int:
+    """A game-UI window (quests, stats, notifications): translucent blue box, centred. Returns its bottom y."""
+    draw = ImageDraw.Draw(img)
+    body, w, h = _system_size(draw, text, font, max_width)
+    x = (img.width - w) // 2
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+    od.rounded_rectangle((x, y, x + w, y + h), radius=14, fill=SYSTEM_FILL, outline=SYSTEM_BORDER, width=3)
+    od.line((x + 14, y + 7, x + w - 14, y + 7), fill=SYSTEM_BORDER + (160,), width=2)  # UI "title bar" accent
+    img.paste(Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB"))
+    ImageDraw.Draw(img).multiline_text((x + 22, y + 22), body, font=font, fill=SYSTEM_TEXT, spacing=8)
+    return y + h + 20
+
+
 def _draw_sfx(img: Image.Image, text: str, font_path: Optional[str]) -> None:
     draw = ImageDraw.Draw(img)
     font = load_font(max(48, img.width // 9), font_path)
@@ -124,20 +150,39 @@ def letter_panel(art: Image.Image, panel: PanelPlan, width: int, font_path: Opti
         y = _draw_caption(img, panel.narration.strip(), font, int(width * 0.8))
 
     # Bubbles alternate left/right, stacked downward, reading order top-left first.
+    # System windows are centred and may be tall; whatever doesn't fit continues below the art.
     overflow: List = []
-    for i, line in enumerate(panel.dialogue):
-        left = i % 2 == 0
-        x = 24 if left else int(width * 0.42)
+    system_w = int(width * 0.86)
+    measure = ImageDraw.Draw(img)
+    bubble_i = 0
+    for line in panel.dialogue:
+        if overflow:
+            overflow.append(line)  # keep reading order once we've spilled over
+            continue
+        if line.kind == "system":
+            if y + _system_size(measure, line.text, font, system_w)[2] > img.height * 0.92:
+                overflow.append(line)
+            else:
+                y = _draw_system(img, y, line.text, font, system_w)
+            continue
+        left = bubble_i % 2 == 0
+        bubble_i += 1
         if y > img.height * 0.6:
             overflow.append(line)
             continue
-        y = _draw_bubble(img, x, y, line.text, line.kind, font, max_text_w, tail_to_right=left) - 10
+        y = _draw_bubble(img, 24 if left else int(width * 0.42), y, line.text, line.kind, font, max_text_w,
+                         tail_to_right=left) - 10
 
     if overflow:
         # Too much text to fit on the art: continue the bubbles in white space below it.
-        extra = Image.new("RGB", (width, 40 + 160 * len(overflow)), (255, 255, 255))
+        height = 40 + sum(_system_size(measure, l.text, font, system_w)[2] + 30 if l.kind == "system" else 200
+                          for l in overflow)
+        extra = Image.new("RGB", (width, height), (255, 255, 255))
         ey = 20
         for i, line in enumerate(overflow):
+            if line.kind == "system":
+                ey = _draw_system(extra, ey, line.text, font, system_w)
+                continue
             ey = _draw_bubble(extra, 24 if i % 2 == 0 else int(width * 0.42), ey, f"{line.speaker}: {line.text}",
                               line.kind, font, max_text_w, tail_to_right=i % 2 == 0)
         extra = extra.crop((0, 0, width, ey))

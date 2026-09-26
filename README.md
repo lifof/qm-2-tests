@@ -158,9 +158,23 @@ The planner defaults to Claude (`claude-opus-5`) with structured JSON output. Se
 To keep everything local, point it at any OpenAI-compatible chat server instead, for example a Qwen LLM on vLLM or Ollama:
 
 ```bash
+OLLAMA_CONTEXT_LENGTH=32768 OLLAMA_KEEP_ALIVE=0 ollama serve     # in another terminal
 python -m webtoon init my_story --planner openai \
-    --planner-base-url http://localhost:11434/v1 --planner-model qwen3:32b
+    --planner-base-url http://localhost:11434/v1 --planner-model qwen3:30b
 ```
+
+Two Ollama settings matter:
+- `OLLAMA_CONTEXT_LENGTH`. Ollama's default context window is far smaller than one storyboarding request, and it silently truncates the chapter.
+- `OLLAMA_KEEP_ALIVE=0`. This frees the LLM's memory before ComfyUI starts drawing.
+
+Smaller local models write weaker storyboards than Claude. If one struggles, lower the segment size to about 600 words.
+
+The storyboard does more than split text:
+- **Game windows.** Quests, character sheets and notifications (LitRPG) become glowing blue game-UI boxes. The art shows a floating holographic screen.
+- **Visible action only.** Backstory and inner thoughts go into captions, and each image shows only what's visible in that moment.
+- **Non-explicit framing.** Nudity and gore are handled by framing, as in published webtoons. At Qwen-Image 2.1's CFG of 1.0 the negative prompt has no effect, so this has to be done in the storyboard.
+
+`mock` is a test mode only. It pastes each paragraph in as the image prompt, so the images won't follow the story. The app warns you before you use it.
 
 ## Long chapters
 

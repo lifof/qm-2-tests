@@ -467,9 +467,15 @@ class App:
             if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
                 self._ensure_key("ANTHROPIC_API_KEY", optional=True)
         elif provider == "openai":
+            self.console.print(
+                "[dim]Local LLM tips (e.g. Ollama on a Mac): use a model that is good at long JSON, such as "
+                "qwen3:14b or qwen3:30b (the 30B MoE runs fast on Apple Silicon). Ollama's default context window "
+                "is far too small for storyboarding and it silently cuts the chapter off - start it with "
+                "OLLAMA_CONTEXT_LENGTH=32768, and OLLAMA_KEEP_ALIVE=0 so it frees memory before ComfyUI draws. "
+                "If the model struggles, lower 'Segment size' in Settings to ~600 words.[/]")
             pl.base_url = self.text("Chat server base URL:", pl.base_url or "http://localhost:11434/v1",
                                     validate=lambda v: v.startswith("http") or "Must start with http").strip()
-            pl.model = self.text("Model name on the server:", pl.model or "qwen3:32b",
+            pl.model = self.text("Model name on the server:", pl.model or "qwen3:30b",
                                  validate=lambda v: bool(v.strip()) or "Required").strip()
         self.save()
 
@@ -612,6 +618,21 @@ class App:
     # ------------------------------------------------------------------ chapters
     def add_chapter(self) -> None:
         p = self.project
+        if p.planner.provider == "mock":
+            self.console.print(Panel(
+                "The planner is set to 'mock', a test mode: it pastes each paragraph in as the image prompt, with no "
+                "shots, no character designs and no story beats - the images won't follow the story and characters "
+                "won't stay consistent. Use Claude or a local LLM to storyboard for real.",
+                title="No real storyboarder", border_style="yellow"))
+            choice = self.select("What now?", [Choice("Set up a real planner now (recommended)", "setup"),
+                                               Choice("Continue with the mock planner anyway", "mock"),
+                                               Choice("Cancel", "cancel")])
+            if choice == "cancel":
+                return
+            if choice == "setup":
+                self.configure_planner()
+                if p.planner.provider == "mock":
+                    return
         next_n = max((c.number for c in p.chapters), default=0) + 1
         file = self.path("Chapter text file:", validate=lambda v: Path(v).expanduser().is_file() or "File not found")
         file_path = Path(file).expanduser().resolve()

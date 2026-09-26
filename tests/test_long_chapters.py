@@ -126,3 +126,13 @@ def test_stubborn_gaps_are_inserted_as_captions(project, tmp_path, monkeypatch):
     # the inserted caption panels sit in story order
     order = [min(p.source_paragraphs) for p in plan.panels]
     assert order == sorted(order)
+
+
+def test_planner_json_extraction_from_local_models():
+    from webtoon.planner import _strip_fences
+
+    body = '{"title": "x"}'
+    assert _strip_fences(body) == body
+    assert _strip_fences(f"<think>let me plan {{panels}}</think>\n{body}") == body
+    assert _strip_fences(f"```json\n{body}\n```") == body
+    assert _strip_fences(f"Sure! Here is the storyboard:\n{body}\nHope it helps.") == body

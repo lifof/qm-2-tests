@@ -33,6 +33,7 @@ Faithfulness - the most important rule:
 - Adapt ALL of the given text, in order. Never skip, merge away or summarise out an event, an action, a meaningful description, an inner thought or a line of dialogue. If there is a lot of content, use more panels.
 - Every paragraph number [n] must appear in the `source_paragraphs` of at least one panel (a panel may adapt several paragraphs; a long paragraph may span several panels).
 - Put every line of dialogue in a bubble exactly as written (verbatim, without the quotation marks). Split a long speech across several bubbles or panels, at most ~25 words per bubble and 3 bubbles per panel. Inner thoughts use kind "thought". Important non-visual prose (time skips, backstory, inner narration) goes in `narration` captions.
+- Game / system windows (quests, character sheets, stat blocks, item descriptions, "You have defeated..." notifications - common in LitRPG) are dialogue entries with kind "system" and speaker "System", text verbatim with its line breaks (a very long sheet may be split over consecutive panels). In that panel's `action`, show the glowing translucent blue holographic screen floating in the air near the character - the art itself must contain no readable text.
 
 Characters:
 - Every character already in the bible MUST be referred to by their exact canonical `name`, even if the text uses a nickname or pronoun. Never re-describe or redesign them; list a character in `new_characters` only if they are genuinely absent from the bible.
@@ -43,6 +44,8 @@ Panels:
 - Pace it like a webtoon: establishing shots when the location changes, close-ups for emotional beats, action shots for movement. Vary shots.
 - Each panel is one single image: at most 3 characters visible, one moment in time. `action` must be concrete and visual (poses, expressions, where people are, key props) because it becomes an image prompt. Dialogue speakers must be canonical names; a speaker does not need to be visible.
 - Keep locations consistent: describe a recurring location with the same words each time.
+- `action` describes only what is visible in this one frame. Never put backstory, memories, thoughts or explanations there (those go in captions); if a caption talks about something not present (e.g. a character's father), the image shows the present scene, or a clearly separate flashback panel.
+- Keep every image non-explicit. When a character is naked or partially clothed, never describe nudity in `action` or `outfit`; choose framing that conceals it the way published webtoons do (head-and-shoulders close-ups, back views, the body cut off by the panel edge, or hidden behind foliage, objects or hands) and state that framing concretely in `action`. Graphic violence is shown through reactions, motion and aftermath rather than gore.
 """
 
 
@@ -194,9 +197,13 @@ def _call_planner(settings: PlannerSettings, user: str, segment: Segment, projec
 
 
 def _strip_fences(raw: str) -> str:
-    raw = raw.strip()
+    """Extract the JSON object from an LLM reply (local models may add <think> blocks, fences or chatter)."""
+    raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.S).strip()
     m = re.match(r"^```(?:json)?\s*(.*?)\s*```$", raw, re.S)
-    return m.group(1) if m else raw
+    if m:
+        return m.group(1)
+    start, end = raw.find("{"), raw.rfind("}")
+    return raw[start:end + 1] if 0 <= start < end else raw
 
 
 def _plan_with_claude(settings: PlannerSettings, user: str) -> str:
@@ -229,21 +236,28 @@ def _plan_with_claude(settings: PlannerSettings, user: str) -> str:
 
 def _plan_with_openai_compatible(settings: PlannerSettings, user: str) -> str:
     """For a self-hosted LLM (e.g. a Qwen model behind vLLM / Ollama / LM Studio)."""
-    from openai import OpenAI
+    from openai import BadRequestError, OpenAI
 
     client = OpenAI(base_url=settings.base_url, api_key=os.environ.get("OPENAI_API_KEY", "not-needed"))
     schema = ChapterPlan.model_json_schema()
-    response = client.chat.completions.create(
-        model=settings.model,
-        messages=[
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT + "\nRespond with a single JSON object matching this schema:\n" + json.dumps(schema),
-            },
-            {"role": "user", "content": user},
-        ],
-        response_format={"type": "json_schema", "json_schema": {"name": "chapter_plan", "schema": schema}},
-    )
+    messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT + "\nRespond with a single JSON object matching this schema:\n" + json.dumps(schema),
+        },
+        {"role": "user", "content": user},
+    ]
+    # Prefer schema-constrained output; fall back for servers that only know JSON mode (or neither).
+    formats = [{"type": "json_schema", "json_schema": {"name": "chapter_plan", "schema": schema}},
+               {"type": "json_object"}, None]
+    for i, fmt in enumerate(formats):
+        try:
+            extra = {"response_format": fmt} if fmt else {}
+            response = client.chat.completions.create(model=settings.model, messages=messages, **extra)
+            break
+        except BadRequestError:
+            if i == len(formats) - 1:
+                raise
     choice = response.choices[0]
     if choice.finish_reason == "length":
         raise RuntimeError("Planner output was cut off. Lower the segment size in the settings.")

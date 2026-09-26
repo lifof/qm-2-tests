@@ -7,7 +7,7 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 Shot = Literal["establishing", "wide", "medium", "close-up", "extreme-close-up", "over-the-shoulder", "action"]
-BubbleKind = Literal["speech", "thought", "shout", "whisper"]
+BubbleKind = Literal["speech", "thought", "shout", "whisper", "system"]
 
 
 class _Strict(BaseModel):

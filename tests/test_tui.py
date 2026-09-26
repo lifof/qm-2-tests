@@ -41,6 +41,7 @@ def test_interactive_session(tmp_path):
     step("Which LLM", DOWN * 2 + ENTER)  # mock planner
     step("Save these model settings", ENTER)
     step("What do you want to do", ENTER)  # add chapter 1
+    step("What now\\?", DOWN + ENTER)  # mock planner warning: continue anyway
     step("Chapter text file", str(chapter))
     child.send(ENTER)
     step("Chapter number", ENTER)
@@ -146,6 +147,8 @@ def test_old_diffusers_project_is_moved_to_comfyui_and_reads_mac_roman(tmp_path)
     step("default for new projects", ENTER)
     child.expect("planner is 'mock'")
     step("What do you want to do", ENTER)  # add chapter 1
+    child.expect("No real storyboarder")
+    step("What now\\?", DOWN + ENTER)  # continue with mock
     step("Chapter text file", str(chapter) + ENTER)
     child.expect("read it as Mac OS Roman")
     child.expect("Chapter1— Jason")

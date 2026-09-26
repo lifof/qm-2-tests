@@ -70,3 +70,23 @@ def test_rerender_single_panel_and_letter_only(tmp_path):
     main(["render", str(project), "1", "--only", "2"])
     assert art.stat().st_mtime_ns != before
     main(["render", str(project), "1", "--letter-only"])
+
+
+def test_system_windows_are_lettered_and_overflow_below_the_art():
+    from PIL import Image
+
+    from webtoon.compose import letter_panel
+    from webtoon.models import Dialogue, PanelPlan
+
+    sheet = "\n".join(["Jason Asano", "Race: Outworlder.", "Current rank: normal."] + [f"[Attribute {i}]: normal." for i in range(30)])
+    panel = PanelPlan(shot="medium", location="maze", time_of_day="day", characters=[], action="a", mood="m",
+                      narration="", sfx="", source_paragraphs=[1],
+                      dialogue=[Dialogue(speaker="System", kind="system", text="New Quest: [Stranger]\nReward: pants."),
+                                Dialogue(speaker="System", kind="system", text=sheet),
+                                Dialogue(speaker="Jason", kind="speech", text="Is this a character sheet?")])
+    art = Image.new("RGB", (1024, 1024), (40, 160, 60))
+    out = letter_panel(art, panel, 800)
+    assert out.width == 800 and out.height > 800  # the long sheet (and the bubble after it) continue below the art
+    # the first window is drawn on the art: its dark-blue fill replaces the green there
+    r, g, b = out.getpixel((400, 60))
+    assert b > g and b > r
