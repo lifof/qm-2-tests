@@ -1,0 +1,72 @@
+"""Drives the interactive app in a real pseudo-terminal (mock image model + mock planner)."""
+
+import json
+import os
+import sys
+from pathlib import Path
+
+import pytest
+
+from webtoon.tui import parse_panel_list
+
+pexpect = pytest.importorskip("pexpect")
+
+ROOT = Path(__file__).resolve().parent.parent
+DOWN, UP, ENTER, BACKSPACE = "\x1b[B", "\x1b[A", "\r", "\x7f"
+
+
+def test_parse_panel_list():
+    assert parse_panel_list("3, 7-9,12") == {3, 7, 8, 9, 12}
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="needs a pty")
+def test_interactive_session(tmp_path):
+    sys.path.insert(0, str(ROOT / "tests"))
+    from test_long_chapters import long_chapter
+
+    chapter = tmp_path / "long_chapter.txt"
+    chapter.write_text(long_chapter(80), encoding="utf-8")
+    env = dict(os.environ, WEBTOON_CONFIG=str(tmp_path / "app.json"), PYTHONPATH=str(ROOT), BROWSER="true")
+    child = pexpect.spawn(sys.executable, ["-m", "webtoon"], cwd=str(tmp_path), env=env, encoding="utf-8",
+                          timeout=120, dimensions=(50, 140))
+
+    def step(prompt, keys):
+        child.expect(prompt)
+        child.send(keys)
+
+    step("Project", ENTER)  # create a new project
+    step("Story title", "Test Story" + ENTER)
+    step("Where should the project live", ENTER)
+    step("How do you run Qwen-Image", DOWN * 3 + ENTER)  # mock
+    step("Which LLM", DOWN * 2 + ENTER)  # mock planner
+    step("Save these model settings", ENTER)
+    step("What do you want to do", ENTER)  # add chapter 1
+    step("Chapter text file", str(chapter))
+    child.send(ENTER)
+    step("Chapter number", ENTER)
+    step("Go\\?", ENTER)  # storyboard and draw
+    step("Open it in your browser", "n")
+    step("What do you want to do", DOWN + ENTER)  # draw / redraw
+    step("Which chapter", ENTER)
+    step("Draw what", DOWN + ENTER)  # specific panels
+    step("Panel numbers", "999" + ENTER)
+    child.expect("No such panel")
+    child.send(BACKSPACE * 3 + "2, 4-5" + ENTER)
+    step("Open it in your browser", "n")
+    step("What do you want to do", DOWN * 5 + ENTER)  # settings
+    step("Settings", DOWN * 5 + ENTER)  # segment size
+    step("Words per segment", BACKSPACE * 6 + "500" + ENTER)
+    step("Settings", UP + ENTER)  # back
+    step("What do you want to do", UP + ENTER)  # quit
+    child.expect("Bye!")
+    child.expect(pexpect.EOF)
+
+    project = tmp_path / "test_story"
+    state = json.loads((project / "story.json").read_text())
+    assert state["image"]["backend"] == "mock"
+    assert state["planner"]["segment_words"] == 500
+    report = json.loads((project / "chapter_01" / "coverage.json").read_text())
+    assert len(report["segments"]) == 3 and report["patched"] == 0
+    assert (project / "chapter_01" / "reader.html").exists()
+    defaults = json.loads((tmp_path / "app.json").read_text())["defaults"]
+    assert defaults["image"]["backend"] == "mock"

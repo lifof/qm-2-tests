@@ -39,7 +39,10 @@
       "mood": "cold grey fog, cyan glow",
       "narration": "The next morning.",
       "dialogue": [],
-      "sfx": ""
+      "sfx": "",
+      "source_paragraphs": [
+        1
+      ]
     },
     {
       "shot": "medium",
@@ -58,7 +61,10 @@
           "kind": "speech"
         }
       ],
-      "sfx": ""
+      "sfx": "",
+      "source_paragraphs": [
+        2
+      ]
     },
     {
       "shot": "close-up",
@@ -77,7 +83,10 @@
           "kind": "speech"
         }
       ],
-      "sfx": ""
+      "sfx": "",
+      "source_paragraphs": [
+        3
+      ]
     },
     {
       "shot": "close-up",
@@ -101,7 +110,10 @@
           "kind": "shout"
         }
       ],
-      "sfx": ""
+      "sfx": "",
+      "source_paragraphs": [
+        4
+      ]
     }
   ],
   "summary": "Mira takes the lantern to the docks, where harbor master Captain Vale recognises it and claims it belongs to the sea."

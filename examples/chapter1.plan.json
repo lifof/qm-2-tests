@@ -29,7 +29,10 @@
       "mood": "moody blue rain, warm window glow",
       "narration": "Rain had not stopped in Harbor City for eleven days.",
       "dialogue": [],
-      "sfx": ""
+      "sfx": "",
+      "source_paragraphs": [
+        1
+      ]
     },
     {
       "shot": "medium",
@@ -42,7 +45,10 @@
       "mood": "warm amber light",
       "narration": "",
       "dialogue": [],
-      "sfx": "Ding!"
+      "sfx": "Ding!",
+      "source_paragraphs": [
+        2
+      ]
     },
     {
       "shot": "medium",
@@ -61,7 +67,10 @@
           "kind": "speech"
         }
       ],
-      "sfx": ""
+      "sfx": "",
+      "source_paragraphs": [
+        3
+      ]
     },
     {
       "shot": "close-up",
@@ -85,7 +94,10 @@
           "kind": "speech"
         }
       ],
-      "sfx": ""
+      "sfx": "",
+      "source_paragraphs": [
+        4
+      ]
     },
     {
       "shot": "over-the-shoulder",
@@ -105,7 +117,10 @@
           "kind": "speech"
         }
       ],
-      "sfx": ""
+      "sfx": "",
+      "source_paragraphs": [
+        5
+      ]
     },
     {
       "shot": "extreme-close-up",
@@ -116,7 +131,10 @@
       "mood": "mysterious cyan glow in darkness",
       "narration": "It was cold. Then, slowly, it began to glow.",
       "dialogue": [],
-      "sfx": ""
+      "sfx": "",
+      "source_paragraphs": [
+        6
+      ]
     }
   ],
   "summary": "In rain-soaked Harbor City, Mira Han arrives late at her grandmother's lantern shop, where her friend Joon Seo gives her an anonymous package. Inside is a tiny cold lantern that starts to glow."

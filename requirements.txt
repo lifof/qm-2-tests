@@ -1,6 +1,8 @@
 pydantic>=2.6
 pillow>=10.1
 requests>=2.31
+questionary>=2.0        # interactive app
+rich>=13.7
 anthropic>=1.8          # planner: --planner anthropic (default)
 openai>=1.40            # planner: --planner openai (self-hosted LLM, e.g. Qwen via vLLM/Ollama)
 

@@ -1,5 +1,6 @@
 """Command-line interface.
 
+    python -m webtoon                                     # interactive app
     python -m webtoon init   my_story --title "My Story"
     python -m webtoon chapter my_story chapter1.txt
     python -m webtoon chapter my_story chapter2.txt      # same characters carry over
@@ -27,10 +28,12 @@ def _add_settings_args(p: argparse.ArgumentParser) -> None:
     g.add_argument("--use-references", action=argparse.BooleanOptionalAction,
                    help="Feed character sheets to an edit-capable model as image references")
     g = p.add_argument_group("planner (LLM that storyboards the chapter)")
-    g.add_argument("--planner", choices=["anthropic", "openai"])
+    g.add_argument("--planner", choices=["anthropic", "openai", "mock"])
     g.add_argument("--planner-model")
     g.add_argument("--planner-base-url", help="For --planner openai: e.g. http://localhost:11434/v1")
-    g.add_argument("--panels", dest="target_panels", help='Target panel count per chapter, e.g. "12-24"')
+    g.add_argument("--segment-words", type=int, help="Long chapters are storyboarded in parts of ~N words (default 1200)")
+    g.add_argument("--density", type=float, help="Panels per 1000 words of text (default 10)")
+    g.add_argument("--retries", type=int, help="Re-plans of a part when text was skipped (default 2)")
     g = p.add_argument_group("look")
     g.add_argument("--style", help="Art-style prompt prepended to every panel")
     g.add_argument("--negative", help="Negative prompt")
@@ -44,7 +47,8 @@ def _apply_settings(project, args) -> None:
         "image_base_url": (project.image, "base_url"), "steps": (project.image, "steps"),
         "cfg": (project.image, "cfg"), "use_references": (project.image, "use_references"),
         "planner": (project.planner, "provider"), "planner_model": (project.planner, "model"),
-        "planner_base_url": (project.planner, "base_url"), "target_panels": (project.planner, "target_panels"),
+        "planner_base_url": (project.planner, "base_url"), "segment_words": (project.planner, "segment_words"), "density": (project.planner, "panels_per_1000_words"),
+        "retries": (project.planner, "max_retries"),
         "style": (project, "style"), "negative": (project, "negative_prompt"), "width": (project, "width"),
         "font": (project, "font"),
     }
@@ -97,7 +101,19 @@ def main(argv=None) -> None:
     p = sub.add_parser("characters", help="Show the character bible")
     p.add_argument("project")
 
+    p = sub.add_parser("app", help="Interactive terminal app (default when run without arguments)")
+    p.add_argument("project", nargs="?")
+
+    argv = sys.argv[1:] if argv is None else argv
+    if not argv:
+        argv = ["app"]
     args = parser.parse_args(argv)
+
+    if args.cmd == "app":
+        from .tui import run
+
+        run(args.project)
+        return
 
     if args.cmd == "init":
         pdir, project = _open(args, create=True)

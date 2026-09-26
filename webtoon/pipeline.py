@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import json
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
@@ -22,7 +23,14 @@ def plan_step(pdir: ProjectDir, project: Project, chapter_file: Path, number: in
               plan: Optional[ChapterPlan] = None) -> ChapterPlan:
     if plan is None:
         log(f"Planning chapter {number} with {project.planner.provider}:{project.planner.model} ...")
-        plan = plan_chapter(project, chapter_file.read_text(encoding="utf-8"), number)
+        plan, report = plan_chapter(project, chapter_file.read_text(encoding="utf-8"), number,
+                                    cache_dir=pdir.chapter_dir(number) / "segments", log=log)
+        pdir.chapter_dir(number).mkdir(parents=True, exist_ok=True)
+        (pdir.chapter_dir(number) / "coverage.json").write_text(json.dumps(report, indent=2, ensure_ascii=False),
+                                                                 encoding="utf-8")
+        if report["patched"]:
+            log(f"  note: {report['patched']} passage(s) the planner kept skipping were added as captions "
+                f"(see coverage.json)")
     plan_path = pdir.save_plan(number, plan)
     added = apply_plan(project, plan, number)
 

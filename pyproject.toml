@@ -1,0 +1,24 @@
+[project]
+name = "webtoon"
+version = "0.2.0"
+description = "Turn story chapters into consistent webtoon strips with Qwen-Image"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.6",
+    "pillow>=10.1",
+    "requests>=2.31",
+    "questionary>=2.0",
+    "rich>=13.7",
+    "anthropic>=1.8",
+    "openai>=1.40",
+]
+
+[project.optional-dependencies]
+local = ["torch>=2.3", "diffusers>=0.36", "transformers", "accelerate"]
+dev = ["pytest", "pexpect"]
+
+[project.scripts]
+webtoon = "webtoon.cli:main"
+
+[tool.setuptools]
+packages = ["webtoon"]

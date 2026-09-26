@@ -45,7 +45,7 @@ class CharacterUpdate(_Strict):
 
 class Dialogue(_Strict):
     speaker: str = Field(description="Canonical character name.")
-    text: str
+    text: str = Field(description="The line exactly as written in the text (split long speeches over several bubbles).")
     kind: BubbleKind
 
 
@@ -61,16 +61,19 @@ class PanelPlan(_Strict):
     narration: str = Field(description="Caption box text, or empty string.")
     dialogue: List[Dialogue]
     sfx: str = Field(description="Sound effect lettering, or empty string.")
+    source_paragraphs: List[int] = Field(
+        description="Numbers of the [n] paragraphs of the input text that this panel adapts."
+    )
 
 
 class ChapterPlan(_Strict):
-    title: str
+    title: str = Field(description="Chapter title (the given one if any, otherwise a short invented one).")
     new_characters: List[CharacterSpec] = Field(
         description="Characters appearing for the first time (not already in the character bible)."
     )
     character_updates: List[CharacterUpdate]
     panels: List[PanelPlan]
-    summary: str = Field(description="3-6 sentence summary of this chapter for continuity in later chapters.")
+    summary: str = Field(description="2-5 sentence summary of the events of this text, for continuity.")
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +115,9 @@ class PlannerSettings(BaseModel):
     provider: str = "anthropic"  # anthropic | openai
     model: str = "claude-opus-5"
     base_url: Optional[str] = None
-    target_panels: str = "12-24"
+    segment_words: int = 1200  # long chapters are storyboarded in segments of about this many words
+    panels_per_1000_words: float = 10.0  # pacing; more panels = more faithful, slower to render
+    max_retries: int = 2  # re-plans of a segment when the coverage check finds skipped text
 
 
 class Project(BaseModel):
