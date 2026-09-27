@@ -876,8 +876,10 @@ class App:
 
     def show_result(self, number: int) -> None:
         """Say where the chapter is; opening it is left to the 'Open a chapter in the browser' menu item."""
-        reader = self.pdir.chapter_dir(number) / "reader.html"
-        self.console.print(f"Chapter {number}: [bold]{escape(str(reader))}[/]")
+        cdir = self.pdir.chapter_dir(number)
+        self.console.print(f"Chapter {number}: [bold]{escape(str(cdir / 'reader.html'))}[/]\n"
+                           f"  [dim]panels/ = lettered panels · strip/ = stitched strip slices · "
+                           f"art/ = raw images without text[/]")
 
     def open_in_browser(self, number: int) -> None:
         reader = self.pdir.chapter_dir(number) / "reader.html"

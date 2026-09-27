@@ -90,3 +90,20 @@ def test_system_windows_are_lettered_and_overflow_below_the_art():
     # the first window is drawn on the art: its dark-blue fill replaces the green there
     r, g, b = out.getpixel((400, 60))
     assert b > g and b > r
+
+
+def test_warns_when_storyboard_has_no_text(tmp_path):
+    from webtoon.models import ChapterPlan
+    from webtoon.pipeline import plan_step, render_step
+
+    plan = ChapterPlan.model_validate_json((EXAMPLES / "chapter1.plan.json").read_text())
+    for p in plan.panels:
+        p.narration, p.dialogue, p.sfx = "", [], ""
+    pdir = ProjectDir(tmp_path / "story")
+    project = pdir.create("Story")
+    project.image.backend = "mock"
+    messages = []
+    plan_step(pdir, project, EXAMPLES / "chapter1.txt", 1, plan=plan, log=messages.append)
+    render_step(pdir, project, 1, log=messages.append)
+    assert any("(0 with text)" in m for m in messages)
+    assert any("no dialogue, captions or sound effects" in m for m in messages)

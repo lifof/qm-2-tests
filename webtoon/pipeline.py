@@ -124,6 +124,12 @@ def assemble_step(pdir: ProjectDir, project: Project, number: int, plan: Optiona
     if not lettered:
         raise RuntimeError(f"Chapter {number} has no rendered panels")
 
+    with_text = sum(1 for p in plans if p.narration.strip() or p.dialogue or p.sfx.strip())
+    log(f"  lettered {len(plans)} panels ({with_text} with text)")
+    if plans and with_text == 0:
+        log("  WARNING: the storyboard has no dialogue, captions or sound effects at all, so the strip has no text. "
+            f"Check {pdir.chapter_dir(number) / 'plan.json'}; a local planner model may have ignored them - "
+            "re-storyboard the chapter or try a stronger model.")
     strip = compose.build_strip(lettered, plans, project.width)
     strip_dir = cdir / "strip"
     for old in strip_dir.glob("*.jpg"):
