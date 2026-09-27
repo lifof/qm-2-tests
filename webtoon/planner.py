@@ -123,8 +123,9 @@ def plan_chapter(project: Project, chapter_text: str, chapter_number: int, cache
     all_panels: List[PanelPlan] = []
     offset = 0
     for seg in segments:
-        key = hashlib.sha256(f"{settings.provider}:{settings.model}:{settings.panels_per_1000_words}:{seg.text}"
-                             .encode()).hexdigest()[:16]
+        # the instructions are part of the key, so improved storyboarding rules re-plan old segments
+        key = hashlib.sha256(f"{settings.provider}:{settings.model}:{settings.panels_per_1000_words}:"
+                             f"{SYSTEM_PROMPT}:{seg.text}".encode()).hexdigest()[:16]
         cache = cache_dir / f"segment_{seg.index + 1:03d}.json" if cache_dir else None
         plan = None
         entry = {"segment": seg.index + 1, "paragraphs": len(seg.units), "words": seg.words}
