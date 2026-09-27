@@ -7,6 +7,7 @@
         "Mimi"
       ],
       "role": "Protagonist",
+      "age": "22",
       "appearance": "blonde woman with curly hair (planner drift - must be ignored)",
       "outfit": "whatever"
     },
@@ -16,6 +17,7 @@
         "Vale"
       ],
       "role": "Harbor master who knows about the lantern",
+      "age": "44",
       "appearance": "tall woman in her 40s, athletic build, dark brown skin, strong jaw, grey eyes, silver-streaked black hair in a tight braid, thin scar across right eyebrow",
       "outfit": "long navy greatcoat with brass buttons, black gloves, tall boots"
     }
@@ -24,7 +26,8 @@
     {
       "name": "Mimi",
       "outfit": "bright yellow raincoat over grey cardigan, dark jeans, red sneakers",
-      "appearance_change": ""
+      "appearance_change": "",
+      "age": ""
     }
   ],
   "panels": [

@@ -55,7 +55,7 @@ class Handler(BaseHTTPRequestHandler):
                    "action": "Jason stands between tall hedges", "mood": "bright", "narration": "", "dialogue": [],
                    "sfx": "", "source_paragraphs": [n]} for n in numbers]
         plan = {"title": "Strange Business", "character_updates": [], "panels": panels, "summary": "Jason wakes up.",
-                "new_characters": [{"name": "Jason Asano", "aliases": ["Jason"], "role": "protagonist",
+                "new_characters": [{"name": "Jason Asano", "aliases": ["Jason"], "role": "protagonist", "age": "32",
                                     "appearance": "completely bald young man", "outfit": "nothing"}]}
         content = "<think>planning</think>" + json.dumps(plan)
         self.send(200, {"id": "x", "object": "chat.completion", "created": 0, "model": "local",

@@ -576,6 +576,7 @@ class App:
                 Separator("-- Look --"),
                 Choice(f"Art style: {short(p.style)}", "style"),
                 Choice(f"Negative prompt: {short(p.negative_prompt)}", "negative"),
+                Choice(f"Drawn instead of nudity: {short(p.nudity_cover)}", "cover"),
                 Choice(f"Strip width: {p.width}px", "width"),
                 Choice("Text: " + ("drawn by Qwen-Image into the art" if p.lettering == "model" else
                                    "added on top by the app"), "lettering"),
@@ -632,6 +633,10 @@ class App:
                                                validate=lambda v: v.isdigit() or "Enter 0 or more"))
             elif what == "style":
                 p.style = self.text("Art style prompt (Esc then Enter to finish):", p.style, multiline=True).strip()
+            elif what == "cover":
+                self.console.print("[dim]Nudity is never sent to the image model; characters the story describes as "
+                                   "naked are drawn wearing this instead (the captions keep the story's words).[/]")
+                p.nudity_cover = self.text("Clothing to draw instead:", p.nudity_cover).strip() or p.nudity_cover
             elif what == "negative":
                 p.negative_prompt = self.text("Negative prompt (Esc then Enter to finish):", p.negative_prompt,
                                               multiline=True).strip()
@@ -917,11 +922,12 @@ class App:
                 self.console.print("No characters yet - they are created when you add a chapter.")
                 return
             table = Table(expand=True)
-            for col in ("Name", "Since", "Appearance", "Outfit", "Sheet"):
+            for col in ("Name", "Since", "Age", "Appearance", "Outfit", "Sheet"):
                 table.add_column(col)
             for c in chars:
                 table.add_row(escape(c.name) + (f"\n[dim]aka {escape(', '.join(c.aliases))}[/]" if c.aliases else ""),
-                              f"ch.{c.first_chapter}", escape(c.appearance), escape(c.outfit), c.reference_image or "-")
+                              f"ch.{c.first_chapter}", escape(c.age or "?"), escape(c.appearance), escape(c.outfit),
+                              c.reference_image or "-")
             self.console.print(table)
             name = self.select("Edit a character?", [Choice(c.name, c.name) for c in chars] + [Choice("Back", "")])
             if not name:
@@ -931,6 +937,7 @@ class App:
     def edit_character(self, c) -> None:
         what = self.select(f"{c.name}:", [
             Choice("Edit appearance (face, hair, body - locked across chapters)", "appearance"),
+            Choice(f"Edit age ({c.age or 'not set'})", "age"),
             Choice("Edit current outfit", "outfit"),
             Choice("Edit aliases / nicknames", "aliases"),
             Choice("Redraw character sheet", "sheet"),
@@ -941,6 +948,8 @@ class App:
         if what == "appearance":
             c.appearance = self.text("Appearance (Esc then Enter to finish):", c.appearance, multiline=True).strip()
             c.reference_image = None
+        elif what == "age":
+            c.age = self.text("Age (e.g. 32, early 30s; n/a for creatures):", c.age).strip()
         elif what == "outfit":
             c.outfit = self.text("Outfit:", c.outfit).strip()
         elif what == "aliases":

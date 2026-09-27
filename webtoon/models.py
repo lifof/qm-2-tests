@@ -24,7 +24,10 @@ class _Strict(BaseModel):
 class CharacterSpec(_Strict):
     name: str = Field(description="Canonical name, reused verbatim in every later chapter.")
     aliases: List[str] = Field(description="Other names/nicknames the text uses for this character.")
-    role: str = Field(description="One short line: who they are in the story.")
+    role: str = Field(description="One short line: who they are in the story (for a creature: what it is).")
+    age: str = Field(description=(
+        "Age as the story implies it, as a number or short range, e.g. '32', 'early 30s', '16', 'ancient'. "
+        "Adults must get an adult age. For creatures/objects use 'n/a'."))
     appearance: str = Field(
         description=(
             "Permanent, purely visual description used as the image prompt: sex, apparent age, "
@@ -38,6 +41,7 @@ class CharacterSpec(_Strict):
 class CharacterUpdate(_Strict):
     name: str = Field(description="Canonical name of an existing character.")
     outfit: str = Field(description="New outfit, or empty string if unchanged.")
+    age: str = Field(description="The character's age if the bible has none yet or the story reveals it; else empty string.")
     appearance_change: str = Field(
         description="Permanent visual change that happened in this chapter (new scar, haircut...), or empty string."
     )
@@ -85,10 +89,12 @@ class Character(BaseModel):
     name: str
     aliases: List[str] = []
     role: str = ""
+    age: str = ""
     appearance: str
     outfit: str = ""
     seed: int = 0
     reference_image: Optional[str] = None  # path relative to project dir
+    reference_prompt: str = ""  # prompt the sheet was drawn with; a changed prompt redraws the sheet
     first_chapter: int = 1
 
 
@@ -143,6 +149,7 @@ class Project(BaseModel):
     negative_prompt: str
     width: int = 800  # final strip width in pixels
     font: Optional[str] = None  # path to a .ttf for lettering; auto-detected if unset
+    nudity_cover: str = "wearing plain, simple, modest clothing that fully covers the torso and hips"
     lettering: str = "app"  # "app": text drawn on top by the app | "model": Qwen-Image draws it into the art
     model_text_max_words: int = 30  # with "model": longer texts (e.g. character sheets) are still lettered by the app
     image: ImageSettings = ImageSettings()

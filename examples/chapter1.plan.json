@@ -5,6 +5,7 @@
       "name": "Mira Han",
       "aliases": [],
       "role": "Protagonist, granddaughter of the lantern shop owner",
+      "age": "22",
       "appearance": "young Korean woman, early 20s, slim, fair skin, oval face, large dark brown eyes, straight black hair in a shoulder-length bob with blunt bangs, small mole under left eye",
       "outfit": "oversized grey knit cardigan over a white t-shirt, dark jeans, red sneakers"
     },
@@ -14,6 +15,7 @@
         "Joon"
       ],
       "role": "Mira's friend who works at the shop",
+      "age": "25",
       "appearance": "young Korean man, mid 20s, tall and lanky, tan skin, narrow face, sharp eyes behind round wire glasses, messy wavy brown hair",
       "outfit": "rolled-up white shirt, brown leather work apron"
     }

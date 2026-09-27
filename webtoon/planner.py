@@ -20,9 +20,9 @@ from typing import Callable, List, Optional
 from pydantic import ValidationError
 
 from .llm_server import DEFAULT_LLAMA_URL, PlannerSession
-from .models import ChapterPlan, PanelPlan, PlannerSettings, Project
+from .models import ChapterPlan, Dialogue, PanelPlan, PlannerSettings, Project
 from .project import apply_plan, bible_for_prompt, character_index
-from .segment import Segment, check_coverage, patch_gaps, split_segments, target_panels
+from .segment import Segment, check_coverage, extract_dialogue, patch_gaps, split_segments, target_panels
 
 Log = Callable[[str], None]
 
@@ -33,20 +33,24 @@ You receive: the CHARACTER BIBLE (characters already established), the STORY SO 
 Faithfulness - the most important rule:
 - Adapt ALL of the given text, in order. Never skip, merge away or summarise out an event, an action, a meaningful description, an inner thought or a line of dialogue. If there is a lot of content, use more panels.
 - Every paragraph number [n] must appear in the `source_paragraphs` of at least one panel (a panel may adapt several paragraphs; a long paragraph may span several panels).
-- Put every line of dialogue in a bubble exactly as written (verbatim, without the quotation marks). Split a long speech across several bubbles or panels, at most ~25 words per bubble and 3 bubbles per panel. Inner thoughts use kind "thought". Important non-visual prose (time skips, backstory, inner narration) goes in `narration` captions.
-- Game / system windows (quests, character sheets, stat blocks, item descriptions, "You have defeated..." notifications - common in LitRPG) are dialogue entries with kind "system" and speaker "System", text verbatim with its line breaks (a very long sheet may be split over consecutive panels). In that panel's `action`, show the glowing translucent blue holographic screen floating in the air near the character - the art itself must contain no readable text.
+- Put every line of dialogue in a bubble (a `dialogue` entry) exactly as written (verbatim, without the quotation marks) - never inside `narration`. Split a long speech across several bubbles or panels, at most ~25 words per bubble and 3 bubbles per panel. Inner thoughts use kind "thought".
+- Show, don't narrate: what can be drawn goes into `action`, not into captions. `narration` is for what can't be shown (time skips, backstory, inner feelings) and must be SHORT - one or two sentences, at most ~25 words, condensed from the prose rather than copied. Most panels have no caption. Paragraphs that are pure description are covered by the pictures, not by captions.
+- Game / system windows (quests, character sheets, stat blocks, item descriptions, "You have defeated..." notifications - common in LitRPG) are dialogue entries with kind "system" and speaker "System", text verbatim with its line breaks (a very long sheet may be split over consecutive panels). The window is added during lettering: in `action`, only show the character looking at something floating in front of them - do not describe the window or any writing.
+- `sfx` only for a distinct sound or impact that actually happens in this moment (a thud, a crash, a squeak); leave it empty in most panels - at most one panel in four has one, and never for emotions ("OUCH" for confusion is wrong).
 
 Characters:
 - Every character already in the bible MUST be referred to by their exact canonical `name`, even if the text uses a nickname or pronoun. Never re-describe or redesign them; list a character in `new_characters` only if they are genuinely absent from the bible.
-- For a new character, write `appearance` as a precise, permanent, purely visual description an illustrator could reproduce identically every time (sex, apparent age, build, skin tone, face, eyes, hair colour/length/style, distinguishing marks). If the text gives few details, invent specific, distinctive ones that fit the story, and make each character visually distinct from the others.
-- Only list a character in `character_updates` when their outfit or permanent look actually changes.
+- For a new character, write `appearance` as a precise, permanent, purely visual description an illustrator could reproduce identically every time (sex, build, skin tone, face, eyes, hair colour/length/style, distinguishing marks). If the text gives few details, invent specific, distinctive ones that fit the story, and make each character visually distinct from the others.
+- `age`: the age the story states or implies. Adults are adults - a grown man who plays video games and has adult parents is in his 20s or 30s, never a child. When unsure whether someone is an adult, make them clearly adult unless the text says they are a child.
+- Recurring creatures, monsters and important objects also go in `new_characters` (role: what it is, age: "n/a"), with a precise appearance including SIZE relative to a person, so they look the same in every panel (e.g. a monstrous hamster "the size of a man's head"). Use their canonical name in `characters` when they are visible.
+- List a character in `character_updates` when their outfit or permanent look changes, or to fill in an `age` the bible doesn't have yet.
 
 Panels:
 - Pace it like a webtoon: establishing shots when the location changes, close-ups for emotional beats, action shots for movement. Vary shots.
 - Each panel is one single image: at most 3 characters visible, one moment in time. `action` must be concrete and visual (poses, expressions, where people are, key props) because it becomes an image prompt. Dialogue speakers must be canonical names; a speaker does not need to be visible.
 - Keep locations consistent: describe a recurring location with the same words each time.
 - `action` describes only what is visible in this one frame. Never put backstory, memories, thoughts or explanations there (those go in captions); if a caption talks about something not present (e.g. a character's father), the image shows the present scene, or a clearly separate flashback panel.
-- Keep every image non-explicit. When a character is naked or partially clothed, never describe nudity in `action` or `outfit`; choose framing that conceals it the way published webtoons do (head-and-shoulders close-ups, back views, the body cut off by the panel edge, or hidden behind foliage, objects or hands) and state that framing concretely in `action`. Graphic violence is shown through reactions, motion and aftermath rather than gore.
+- Keep every image non-explicit and all-ages. Never describe nudity in `action` or `outfit`: a character who is naked in the prose is drawn in simple modest clothing, and the caption or dialogue can mention it. Graphic violence is shown through reactions, motion and aftermath rather than gore.
 """
 
 
@@ -141,15 +145,19 @@ def plan_chapter(project: Project, chapter_text: str, chapter_number: int, cache
             coverage = check_coverage(seg, plan)
             attempts = 1
             while not coverage.ok and attempts <= settings.max_retries:
-                log(f"    coverage check: {len(coverage.missing_units)} paragraph(s), "
-                    f"{len(coverage.missing_dialogue)} dialogue line(s) missing - asking for a revision")
+                log(f"    coverage check: {len(coverage.missing_units)} paragraph(s) and "
+                    f"{len(coverage.missing_dialogue)} dialogue line(s) missing, {len(coverage.long_captions)} "
+                    "caption(s) too long - asking for a revision")
                 revised = _call_planner(settings, _retry_prompt(base, plan, coverage.feedback(seg)), seg, project)
                 attempts += 1
                 new_cov = check_coverage(seg, revised)
-                if len(new_cov.missing_units) + len(new_cov.missing_dialogue) <= \
-                        len(coverage.missing_units) + len(coverage.missing_dialogue):
+                # missing story content matters most, then everything else
+                rank = lambda c: (len(c.missing_units) + len(c.missing_dialogue), c.problems)  # noqa: E731
+                if rank(new_cov) <= rank(coverage):
                     plan, coverage = revised, new_cov
-            if not coverage.ok:
+            if coverage.long_captions:
+                log(f"    note: {len(coverage.long_captions)} caption(s) are still long")
+            if coverage.content_missing:
                 log(f"    still missing after {attempts} attempt(s); inserting the text as captions")
                 plan = patch_gaps(seg, plan, coverage)
             entry.update({
@@ -275,14 +283,18 @@ def _plan_with_openai_compatible(settings: PlannerSettings, user: str) -> str:
 
 
 def mock_plan(segment: Segment, project: Project) -> ChapterPlan:
-    """Offline planner for trying the pipeline: one caption panel per paragraph."""
+    """Offline planner for trying the pipeline: one panel per paragraph (short caption + its quoted lines)."""
     index = character_index(project)
     panels = []
     for n, unit in enumerate(segment.units, start=1):
         lowered = unit.lower()
         present = list(dict.fromkeys(c.name for alias, c in index.items() if re.search(rf"\b{re.escape(alias)}\b", lowered)))
+        lines = [line for _, line in extract_dialogue([unit])]
+        prose = " ".join(re.sub(r"[“\"«「『][^”\"»」』]*[”\"»」』]", " ", unit).split())
+        caption = " ".join(prose.split()[:40]) + ("..." if len(prose.split()) > 40 else "")
         panels.append(PanelPlan(shot="medium", location="the scene", time_of_day="day", characters=present[:3],
-                                action=unit[:300], mood="neutral", narration=unit, dialogue=[], sfx="",
+                                action=unit[:300], mood="neutral", narration=caption,
+                                dialogue=[Dialogue(speaker="", text=line, kind="speech") for line in lines], sfx="",
                                 source_paragraphs=[n]))
     return ChapterPlan(title="Untitled", new_characters=[], character_updates=[], panels=panels,
                        summary=segment.units[0][:200])

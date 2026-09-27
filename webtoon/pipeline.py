@@ -56,15 +56,19 @@ def ensure_reference_sheets(pdir: ProjectDir, project: Project, names: Iterable[
     for c in project.characters:
         if c.name not in wanted:
             continue
-        if c.reference_image and (pdir.root / c.reference_image).exists():
+        prompt = reference_sheet_prompt(project, c)
+        if c.reference_image and (pdir.root / c.reference_image).exists() and c.reference_prompt == prompt:
             continue
-        log(f"  drawing character sheet for {c.name} ...")
+        redraw = bool(c.reference_image)
+        log(f"  {'redrawing' if redraw else 'drawing'} character sheet for {c.name}"
+            f"{' (its description changed)' if redraw else ''} ...")
         w, h = portrait_size(project.image.megapixels)
-        img = backend.generate(reference_sheet_prompt(project, c), project.negative_prompt, w, h, c.seed)
+        img = backend.generate(prompt, project.negative_prompt, w, h, c.seed)
         pdir.characters_dir.mkdir(parents=True, exist_ok=True)
         path = pdir.characters_dir / f"{_slug(c.name)}.png"
         img.save(path)
         c.reference_image = str(path.relative_to(pdir.root))
+        c.reference_prompt = prompt
         pdir.save(project)
 
 

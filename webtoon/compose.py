@@ -55,7 +55,8 @@ def _text_block(draw, text, font, max_width, spacing=6):
     return body, right - left, bottom - top
 
 
-def _draw_bubble(img: Image.Image, x: int, y: int, text: str, kind: str, font, max_width: int, tail_to_right: bool) -> int:
+def _draw_bubble(img: Image.Image, x: int, y: int, text: str, kind: str, font, max_width: int, tail_to_right: bool,
+                 occupied: Optional[list] = None) -> int:
     """Draw one bubble with its top-left at (x, y); returns its bottom y."""
     draw = ImageDraw.Draw(img)
     if kind == "shout":
@@ -65,6 +66,8 @@ def _draw_bubble(img: Image.Image, x: int, y: int, text: str, kind: str, font, m
     w, h = tw + 2 * pad_x, th + 2 * pad_y
     x = max(8, min(x, img.width - w - 8))
     box = (x, y, x + w, y + h)
+    if occupied is not None:
+        occupied.append((x, y, x + w, y + h + 34))
     outline = (20, 20, 20)
     fill = (255, 255, 255)
 
@@ -92,11 +95,13 @@ def _draw_bubble(img: Image.Image, x: int, y: int, text: str, kind: str, font, m
     return y + h + 34
 
 
-def _draw_caption(img: Image.Image, text: str, font, max_width: int) -> int:
+def _draw_caption(img: Image.Image, text: str, font, max_width: int, occupied: Optional[list] = None) -> int:
     draw = ImageDraw.Draw(img)
     body, tw, th = _text_block(draw, text, font, max_width)
     pad = 16
     box = (12, 12, 12 + tw + 2 * pad, 12 + th + 2 * pad)
+    if occupied is not None:
+        occupied.append(box)
     draw.rectangle(box, fill=(250, 244, 220), outline=(20, 20, 20), width=3)
     draw.multiline_text((box[0] + pad, box[1] + pad), body, font=font, fill=(20, 20, 20), spacing=6)
     return box[3] + 14
@@ -114,11 +119,13 @@ def _system_size(draw, text: str, font, max_width: int, pad: int = 22) -> tuple[
     return body, right - left + 2 * pad, bottom - top + 2 * pad
 
 
-def _draw_system(img: Image.Image, y: int, text: str, font, max_width: int) -> int:
+def _draw_system(img: Image.Image, y: int, text: str, font, max_width: int, occupied: Optional[list] = None) -> int:
     """A game-UI window (quests, stats, notifications): translucent blue box, centred. Returns its bottom y."""
     draw = ImageDraw.Draw(img)
     body, w, h = _system_size(draw, text, font, max_width)
     x = (img.width - w) // 2
+    if occupied is not None:
+        occupied.append((x, y, x + w, y + h))
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     od = ImageDraw.Draw(overlay)
     od.rounded_rectangle((x, y, x + w, y + h), radius=14, fill=SYSTEM_FILL, outline=SYSTEM_BORDER, width=3)
@@ -128,32 +135,45 @@ def _draw_system(img: Image.Image, y: int, text: str, font, max_width: int) -> i
     return y + h + 20
 
 
-def _draw_sfx(img: Image.Image, text: str, font_path: Optional[str]) -> None:
-    draw = ImageDraw.Draw(img)
-    font = load_font(max(48, img.width // 9), font_path)
+def _overlaps(a, b) -> bool:
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def _draw_sfx(img: Image.Image, text: str, font_path: Optional[str], occupied: Sequence[tuple] = ()) -> None:
+    """Tilted SFX lettering in a corner that doesn't cover bubbles, captions or windows."""
     text = text.upper()
-    tw = draw.textlength(text, font=font)
-    x = max(10, img.width - tw - 30)
-    y = int(img.height * 0.68)
-    draw.text((x, y), text, font=font, fill=(255, 214, 0), stroke_width=6, stroke_fill=(20, 20, 20))
+    font = load_font(max(40, img.width // 12), font_path)
+    probe = ImageDraw.Draw(img)
+    left, top, right, bottom = probe.textbbox((0, 0), text, font=font, stroke_width=5)
+    layer = Image.new("RGBA", (right - left + 20, bottom - top + 20), (0, 0, 0, 0))
+    ImageDraw.Draw(layer).text((10 - left, 10 - top), text, font=font, fill=(255, 214, 0, 255), stroke_width=5,
+                               stroke_fill=(20, 20, 20, 255))
+    layer = layer.rotate(7, expand=True, resample=Image.BICUBIC)
+    if layer.width > img.width - 20:  # very long SFX: scale it down to fit
+        ratio = (img.width - 20) / layer.width
+        layer = layer.resize((int(layer.width * ratio), int(layer.height * ratio)), Image.LANCZOS)
+    w, h = layer.size
+    margin = 18
+    candidates = [(img.width - w - margin, img.height - h - margin), (margin, img.height - h - margin),
+                  (img.width - w - margin, int(img.height * 0.45)), (margin, int(img.height * 0.45)),
+                  (img.width - w - margin, margin)]
+    x, y = next(((cx, cy) for cx, cy in candidates if not any(_overlaps((cx, cy, cx + w, cy + h), o) for o in occupied)),
+                candidates[0])
+    base = img.convert("RGBA")
+    base.alpha_composite(layer, (max(0, x), max(0, y)))
+    img.paste(base.convert("RGB"))
 
 
-def letter_panel(art: Image.Image, panel: PanelPlan, width: int, font_path: Optional[str] = None) -> Image.Image:
-    """Resize a generated panel to the strip width and draw its text on it."""
-    art = art.convert("RGB")
-    img = art.resize((width, round(art.height * width / art.width)), Image.LANCZOS)
-    font = load_font(max(20, width // 30), font_path)
+def _letter_on(img: Image.Image, panel: PanelPlan, width: int, font, occupied: list) -> List:
+    """Draw captions/bubbles/windows that fit on the art; return the lines that don't."""
     max_text_w = int(width * 0.52)
-
-    y = 16
-    if panel.narration.strip():
-        y = _draw_caption(img, panel.narration.strip(), font, int(width * 0.8))
-
-    # Bubbles alternate left/right, stacked downward, reading order top-left first.
-    # System windows are centred and may be tall; whatever doesn't fit continues below the art.
-    overflow: List = []
     system_w = int(width * 0.86)
     measure = ImageDraw.Draw(img)
+    y = 16
+    if panel.narration.strip():
+        y = _draw_caption(img, panel.narration.strip(), font, int(width * 0.8), occupied)
+    # Bubbles alternate left/right, stacked downward, reading order top-left first.
+    overflow: List = []
     bubble_i = 0
     for line in panel.dialogue:
         if overflow:
@@ -163,18 +183,35 @@ def letter_panel(art: Image.Image, panel: PanelPlan, width: int, font_path: Opti
             if y + _system_size(measure, line.text, font, system_w)[2] > img.height * 0.92:
                 overflow.append(line)
             else:
-                y = _draw_system(img, y, line.text, font, system_w)
+                y = _draw_system(img, y, line.text, font, system_w, occupied)
             continue
         left = bubble_i % 2 == 0
         bubble_i += 1
-        if y > img.height * 0.6:
+        _, tw, th = _text_block(measure, line.text, font, max_text_w)
+        if y + th + 60 > img.height * 0.8:
             overflow.append(line)
             continue
         y = _draw_bubble(img, 24 if left else int(width * 0.42), y, line.text, line.kind, font, max_text_w,
-                         tail_to_right=left) - 10
+                         tail_to_right=left, occupied=occupied) - 10
+    return overflow
+
+
+def letter_panel(art: Image.Image, panel: PanelPlan, width: int, font_path: Optional[str] = None) -> Image.Image:
+    """Resize a generated panel to the strip width and draw its text on it."""
+    art = art.convert("RGB")
+    base = art.resize((width, round(art.height * width / art.width)), Image.LANCZOS)
+    # Try the normal text size first; if something doesn't fit on the art, try slightly smaller text
+    # before spilling over into white space below the panel.
+    for scale in (1.0, 0.85):
+        font = load_font(max(18, int(width // 30 * scale)), font_path)
+        img, occupied = base.copy(), []
+        overflow = _letter_on(img, panel, width, font, occupied)
+        if not overflow:
+            break
 
     if overflow:
-        # Too much text to fit on the art: continue the bubbles in white space below it.
+        system_w, max_text_w = int(width * 0.86), int(width * 0.52)
+        measure = ImageDraw.Draw(img)
         height = 40 + sum(_system_size(measure, l.text, font, system_w)[2] + 30 if l.kind == "system" else 200
                           for l in overflow)
         extra = Image.new("RGB", (width, height), (255, 255, 255))
@@ -183,7 +220,8 @@ def letter_panel(art: Image.Image, panel: PanelPlan, width: int, font_path: Opti
             if line.kind == "system":
                 ey = _draw_system(extra, ey, line.text, font, system_w)
                 continue
-            ey = _draw_bubble(extra, 24 if i % 2 == 0 else int(width * 0.42), ey, f"{line.speaker}: {line.text}",
+            text = f"{line.speaker}: {line.text}" if line.speaker else line.text
+            ey = _draw_bubble(extra, 24 if i % 2 == 0 else int(width * 0.42), ey, text,
                               line.kind, font, max_text_w, tail_to_right=i % 2 == 0)
         extra = extra.crop((0, 0, width, ey))
         combined = Image.new("RGB", (width, img.height + extra.height), (255, 255, 255))
@@ -192,7 +230,7 @@ def letter_panel(art: Image.Image, panel: PanelPlan, width: int, font_path: Opti
         img = combined
 
     if panel.sfx.strip():
-        _draw_sfx(img, panel.sfx.strip(), font_path)
+        _draw_sfx(img, panel.sfx.strip(), font_path, occupied)
     return img
 
 

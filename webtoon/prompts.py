@@ -6,6 +6,7 @@ from typing import List, Optional, Tuple
 
 from .models import Character, PanelPlan, Project
 from .project import character_index
+from .safety import PanelSafety, age_phrase, sheet_outfit
 
 SHOT_PHRASES = {
     "establishing": "establishing shot, wide view of the location, characters small in frame",
@@ -18,10 +19,12 @@ SHOT_PHRASES = {
 }
 
 
-def describe_character(c: Character) -> str:
-    desc = f"{c.name}: {c.appearance}"
-    if c.outfit:
-        desc += f", wearing {c.outfit}"
+def describe_character(c: Character, outfit: Optional[str] = None) -> str:
+    outfit = c.outfit if outfit is None else outfit
+    age = age_phrase(c)
+    desc = f"{c.name}: {age + ', ' if age else ''}{c.appearance}"
+    if outfit:
+        desc += ", " + (outfit if outfit.startswith("wearing") else f"wearing {outfit}")
     return desc
 
 
@@ -118,17 +121,23 @@ def negative_prompt_for(project: Project, prompt: str) -> str:
 def panel_prompt(project: Project, panel: PanelPlan,
                  model_text: Optional[PanelPlan] = None) -> Tuple[str, List[Character]]:
     chars = panel_characters(project, panel)
+    split = split_lettering(project, panel)
     if model_text is None:
-        model_text = split_lettering(project, panel)[0]
+        model_text = split[0]
+    app_text = split[1]
     parts = [
         project.style,
         SHOT_PHRASES.get(panel.shot, panel.shot),
         f"Setting: {panel.location}, {panel.time_of_day}",
     ]
+    safety = PanelSafety(panel.action, chars)
     if chars:
         count = {1: "one person", 2: "two people", 3: "three people"}.get(len(chars), f"{len(chars)} people")
-        parts.append(f"The image shows exactly {count}. " + " | ".join(describe_character(c) for c in chars))
-    parts.append(f"Scene: {panel.action}")
+        parts.append(f"The image shows exactly {count}. " +
+                     " | ".join(describe_character(c, safety.outfit(c, project.nudity_cover)) for c in chars))
+    parts.append(f"Scene: {safety.action(panel.action)}")
+    if safety.cover:
+        parts.append("Everyone in the image is fully and modestly clothed; tasteful, non-explicit, all-ages image")
     parts.append(f"Mood and lighting: {panel.mood}")
     phrases = text_phrases(model_text, [c.name for c in chars])
     if phrases:
@@ -137,6 +146,10 @@ def panel_prompt(project: Project, panel: PanelPlan,
                      "and there is no other text. A single full-bleed illustration with no panel borders")
     else:
         parts.append("A single full-bleed illustration with no text, no speech bubbles, no panel borders")
+    if app_text.narration.strip() or any(d.kind != "system" for d in app_text.dialogue):
+        parts.append("The composition leaves calm, uncluttered background space near the top of the frame")
+    if any(d.kind == "system" for d in app_text.dialogue):
+        parts.append("Any floating holographic screen in the scene is completely blank, with no writing or symbols")
     return ". ".join(p.strip().rstrip(".") for p in parts if p.strip()) + ".", chars
 
 
@@ -144,5 +157,5 @@ def reference_sheet_prompt(project: Project, c: Character) -> str:
     return (
         f"{project.style}. Character reference sheet of a single character, full body, standing, front view, "
         f"neutral pose, neutral expression, plain light grey background, even studio lighting. "
-        f"{describe_character(c)}. No text."
+        f"{describe_character(c, sheet_outfit(c, project.nudity_cover))}. Fully and modestly clothed. No text."
     )

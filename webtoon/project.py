@@ -99,17 +99,21 @@ def apply_plan(project: Project, plan: ChapterPlan, chapter_number: int) -> list
                 existing.reference_image = None
             existing.aliases, existing.role = spec.aliases, spec.role
             existing.appearance, existing.outfit = spec.appearance, spec.outfit
+            existing.age = spec.age or existing.age
             continue
         if existing is not None:
             # Planner re-introduced someone from an earlier chapter: keep the locked look.
             for alias in spec.aliases:
                 if alias not in existing.aliases and alias.lower() != existing.name.lower():
                     existing.aliases.append(alias)
+            if not existing.age and spec.age.strip():
+                existing.age = spec.age.strip()  # older bibles had no ages
             continue
         char = Character(
             name=spec.name,
             aliases=spec.aliases,
             role=spec.role,
+            age=spec.age,
             appearance=spec.appearance,
             outfit=spec.outfit,
             seed=stable_seed(f"{project.title}:{spec.name}"),
@@ -125,6 +129,8 @@ def apply_plan(project: Project, plan: ChapterPlan, chapter_number: int) -> list
             continue
         if upd.outfit.strip():
             char.outfit = upd.outfit.strip()
+        if upd.age.strip():
+            char.age = upd.age.strip()
         change = upd.appearance_change.strip()
         if change and change not in char.appearance:
             char.appearance = f"{char.appearance}; {change}"
@@ -137,7 +143,8 @@ def bible_for_prompt(project: Project) -> str:
         return "(empty - this is the first chapter)"
     return json.dumps(
         [
-            {"name": c.name, "aliases": c.aliases, "role": c.role, "appearance": c.appearance, "current_outfit": c.outfit}
+            {"name": c.name, "aliases": c.aliases, "role": c.role, "age": c.age or "(unknown - set it via character_updates)",
+             "appearance": c.appearance, "current_outfit": c.outfit}
             for c in project.characters
         ],
         indent=2,

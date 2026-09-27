@@ -197,6 +197,14 @@ The storyboard does more than split text:
 
 `mock` is a test mode only. It pastes each paragraph in as the image prompt, so the images won't follow the story. The app warns you before you use it.
 
+## Content safeguards
+
+Image prompts go through fixed rules that don't depend on the storyboard LLM behaving:
+
+- **Nudity is never sent to the image model.** Clauses describing it are removed, and the character is drawn in modest clothing instead (*Settings → Drawn instead of nudity*). Captions and dialogue keep the story's words.
+- **Ages are explicit.** Every character has an age, and adults are described as adults in every prompt, so they aren't drawn as children. Revealing clothing (shirtless, swimwear, underwear…) is only drawn when everyone in the panel has a stated adult age. Characters with an unknown age are covered too. Set ages under *Characters → Edit age*; the storyboarder also fills in missing ones.
+- **Reference sheets are always fully clothed.** They are redrawn automatically when their prompt changes, because a sheet is passed to the model with every panel its character appears in.
+
 ## Text: app lettering or Qwen-Image lettering
 
 By default the image model draws art only. The app then adds the text on top: speech, thought, shout and whisper bubbles, captions, game windows and sound effects. You get the exact wording every time, and re-lettering is instant (`render --letter-only`).

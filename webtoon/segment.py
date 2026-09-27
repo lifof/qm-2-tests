@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import List, Sequence
 
-from .models import ChapterPlan, PanelPlan
+from .models import ChapterPlan, Dialogue, PanelPlan
 
 MAX_UNIT_WORDS = 160
 
@@ -121,12 +121,12 @@ def extract_dialogue(units: Sequence[str]) -> List[tuple[int, str]]:
     return found
 
 
-def _plan_text(panels: Sequence[PanelPlan]) -> str:
-    parts: List[str] = []
-    for p in panels:
-        parts.append(p.narration)
-        parts.extend(d.text for d in p.dialogue)
-    return _norm(" ".join(parts))
+MAX_CAPTION_WORDS = 45
+
+
+def _bubble_text(panels: Sequence[PanelPlan]) -> str:
+    """Dialogue has to be in bubbles; a caption quoting it doesn't count."""
+    return _norm(" ".join(d.text for p in panels for d in p.dialogue))
 
 
 def line_is_covered(line: str, haystack: str) -> bool:
@@ -141,10 +141,19 @@ def line_is_covered(line: str, haystack: str) -> bool:
 class Coverage:
     missing_units: List[int] = field(default_factory=list)
     missing_dialogue: List[tuple[int, str]] = field(default_factory=list)
+    long_captions: List[tuple[int, str]] = field(default_factory=list)  # (panel number, caption)
+
+    @property
+    def problems(self) -> int:
+        return len(self.missing_units) + len(self.missing_dialogue) + len(self.long_captions)
 
     @property
     def ok(self) -> bool:
-        return not self.missing_units and not self.missing_dialogue
+        return self.problems == 0
+
+    @property
+    def content_missing(self) -> bool:
+        return bool(self.missing_units or self.missing_dialogue)
 
     def feedback(self, segment: Segment) -> str:
         lines = []
@@ -152,24 +161,30 @@ class Coverage:
             lines.append("These paragraphs are not cited by any panel's source_paragraphs, so their content was skipped:")
             lines.extend(f"[{n}] {segment.units[n - 1]}" for n in self.missing_units)
         if self.missing_dialogue:
-            lines.append("These lines of dialogue are missing from the bubbles/narration (they must appear verbatim):")
+            lines.append("These lines of dialogue are missing from the speech bubbles (they must appear verbatim in "
+                         "`dialogue` entries, not in captions):")
             lines.extend(f"[{n}] \"{text}\"" for n, text in self.missing_dialogue)
+        if self.long_captions:
+            lines.append("These captions are too long (webtoon captions are 1-2 short sentences, max ~25 words). "
+                         "Condense them, move what can be drawn into `action`, and put any dialogue in bubbles:")
+            lines.extend(f"panel {n}: {text}" for n, text in self.long_captions)
         return "\n".join(lines)
 
 
 def check_coverage(segment: Segment, plan: ChapterPlan) -> Coverage:
     cited = {n for p in plan.panels for n in p.source_paragraphs}
     missing_units = [n for n in range(1, len(segment.units) + 1) if n not in cited]
-    haystack = _plan_text(plan.panels)
+    haystack = _bubble_text(plan.panels)
     missing_dialogue = [(n, line) for n, line in extract_dialogue(segment.units) if not line_is_covered(line, haystack)]
-    return Coverage(missing_units, missing_dialogue)
+    long_captions = [(i, p.narration) for i, p in enumerate(plan.panels, 1) if word_count(p.narration) > MAX_CAPTION_WORDS]
+    return Coverage(missing_units, missing_dialogue, long_captions)
 
 
 def patch_gaps(segment: Segment, plan: ChapterPlan, coverage: Coverage) -> ChapterPlan:
     """Last resort after retries: put any still-missing text into the plan so nothing is lost.
 
     Missing paragraphs become caption-only panels inserted in story order; missing
-    dialogue lines are appended to the caption of the panel that adapts their paragraph.
+    dialogue lines become speech bubbles in the panel that adapts their paragraph.
     """
     panels = [p.model_copy(deep=True) for p in plan.panels]
     missing_units = set(coverage.missing_units)
@@ -178,7 +193,7 @@ def patch_gaps(segment: Segment, plan: ChapterPlan, coverage: Coverage) -> Chapt
             continue  # the whole paragraph gets its own caption panel below
         host = next((p for p in panels if n in p.source_paragraphs), panels[-1] if panels else None)
         if host is not None:
-            host.narration = f"{host.narration} “{line}”".strip()
+            host.dialogue.append(Dialogue(speaker="", text=line, kind="speech"))
 
     for n in sorted(missing_units):
         # insert after the last panel adapting an earlier paragraph

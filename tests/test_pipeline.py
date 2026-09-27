@@ -107,3 +107,19 @@ def test_warns_when_storyboard_has_no_text(tmp_path):
     render_step(pdir, project, 1, log=messages.append)
     assert any("(0 with text)" in m for m in messages)
     assert any("no dialogue, captions or sound effects" in m for m in messages)
+
+
+def test_reference_sheet_is_redrawn_when_its_description_changes(tmp_path):
+    project = tmp_path / "story"
+    run_chapter(project, 1)
+    pdir = ProjectDir(project)
+    state = pdir.load()
+    sheet = project / state.characters[0].reference_image
+    before = sheet.stat().st_mtime_ns
+    plan = pdir.load_plan(1)
+    plan.new_characters[0].outfit = "nothing (naked)"  # e.g. an older storyboard left a character unclothed
+    pdir.save_plan(1, plan)
+    main(["render", str(project), "1", "--changed"])
+    after = pdir.load().characters[0]
+    assert sheet.stat().st_mtime_ns != before
+    assert "modest clothing" in after.reference_prompt and "naked" not in after.reference_prompt
