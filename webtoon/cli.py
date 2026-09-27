@@ -54,6 +54,10 @@ def _add_settings_args(p: argparse.ArgumentParser) -> None:
     g.add_argument("--negative", help="Negative prompt")
     g.add_argument("--width", type=int, help="Strip width in px (default 800)")
     g.add_argument("--font", help="Path to a .ttf used for lettering")
+    g.add_argument("--lettering", choices=["app", "model"],
+                   help="Who draws the text: 'app' (on top, exact) or 'model' (Qwen-Image draws it into the art)")
+    g.add_argument("--model-text-max-words", type=int,
+                   help="With --lettering model: longer texts are still added by the app (default 30)")
 
 
 def _apply_settings(project, args) -> None:
@@ -67,7 +71,8 @@ def _apply_settings(project, args) -> None:
         "llm_model": (project.planner, "llm_model"), "llama_server": (project.planner, "llama_server"),
         "llm_context": (project.planner, "llm_context"), "llm_args": (project.planner, "llm_args"),
         "style": (project, "style"), "negative": (project, "negative_prompt"), "width": (project, "width"),
-        "font": (project, "font"),
+        "font": (project, "font"), "lettering": (project, "lettering"),
+        "model_text_max_words": (project, "model_text_max_words"),
         "diffusion_model": (project.image, "diffusion_model"), "text_encoder": (project.image, "text_encoder"),
         "vae": (project.image, "vae"), "comfy_dir": (project.image, "comfy_dir"),
         "comfy_args": (project.image, "comfy_args"),
@@ -127,6 +132,8 @@ def main(argv=None) -> None:
     p.add_argument("--only", help="Comma-separated panel numbers to (re)draw, e.g. 3,7")
     p.add_argument("--force", action="store_true", help="Redraw panels even if art already exists")
     p.add_argument("--letter-only", action="store_true", help="Only redo lettering/strip, no image generation")
+    p.add_argument("--changed", action="store_true",
+                   help="Also redraw panels whose prompt changed (e.g. after switching --lettering)")
     _add_settings_args(p)
 
     p = sub.add_parser("characters", help="Show the character bible")
@@ -175,7 +182,8 @@ def main(argv=None) -> None:
             assemble_step(pdir, project, args.number)
             return
         only = {int(x) for x in args.only.split(",")} if args.only else None
-        render_step(pdir, project, args.number, only=only, force=args.force or only is not None)
+        render_step(pdir, project, args.number, only=only, force=args.force or only is not None,
+                    redraw_changed=args.changed)
 
     elif args.cmd == "characters":
         pdir, project = _open(args, create=False)

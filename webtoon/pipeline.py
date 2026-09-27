@@ -15,7 +15,7 @@ from .models import ChapterPlan, ChapterRecord, Project
 from .llm_server import PlannerSession
 from .planner import plan_chapter
 from .project import ProjectDir, apply_plan, stable_seed
-from .prompts import panel_prompt, reference_sheet_prompt
+from .prompts import MODEL_TEXT_MARKER, negative_prompt_for, panel_prompt, reference_sheet_prompt, split_lettering
 from .textio import encoding_label, read_chapter
 
 Log = Callable[[str], None]
@@ -69,7 +69,8 @@ def ensure_reference_sheets(pdir: ProjectDir, project: Project, names: Iterable[
 
 
 def render_step(pdir: ProjectDir, project: Project, number: int, only: Optional[set[int]] = None,
-                force: bool = False, backend: Optional[ImageBackend] = None, log: Log = print) -> Path:
+                force: bool = False, backend: Optional[ImageBackend] = None, log: Log = print,
+                redraw_changed: bool = False) -> Path:
     plan = pdir.load_plan(number)
     apply_plan(project, plan, number)  # idempotent; picks up hand edits to plan.json
     pdir.save(project)
@@ -79,9 +80,16 @@ def render_step(pdir: ProjectDir, project: Project, number: int, only: Optional[
     art_dir.mkdir(parents=True, exist_ok=True)
     lettered_dir.mkdir(parents=True, exist_ok=True)
 
+    prompts = [panel_prompt(project, p) for p in plan.panels]
+
+    def stale(i: int) -> bool:
+        saved = art_dir / f"panel_{i + 1:03d}.prompt.txt"
+        return saved.exists() and saved.read_text(encoding="utf-8") != prompts[i][0]
+
     todo = [
         i for i in range(len(plan.panels))
-        if (only is None or i + 1 in only) and (force or not (art_dir / f"panel_{i + 1:03d}.png").exists())
+        if (only is None or i + 1 in only)
+        and (force or not (art_dir / f"panel_{i + 1:03d}.png").exists() or (redraw_changed and stale(i)))
     ]
     if todo and backend is None:
         log(f"Loading image backend {project.image.backend}:{project.image.model} ...")
@@ -95,11 +103,11 @@ def render_step(pdir: ProjectDir, project: Project, number: int, only: Optional[
     use_refs = project.image.use_references and backend is not None and backend.supports_references
     for i in todo:
         panel = plan.panels[i]
-        prompt, chars = panel_prompt(project, panel)
+        prompt, chars = prompts[i]
         refs = [pdir.root / c.reference_image for c in chars if c.reference_image] if use_refs else []
         w, h = size_for_shot(panel.shot, project.image.megapixels)
         log(f"  panel {i + 1}/{len(plan.panels)} [{panel.shot}] {', '.join(c.name for c in chars) or '-'}")
-        img = backend.generate(prompt, project.negative_prompt, w, h,
+        img = backend.generate(prompt, negative_prompt_for(project, prompt), w, h,
                                stable_seed(f"{project.title}:{number}:{i}"), refs[:3])
         img.save(art_dir / f"panel_{i + 1:03d}.png")
         (art_dir / f"panel_{i + 1:03d}.prompt.txt").write_text(prompt, encoding="utf-8")
@@ -117,7 +125,11 @@ def assemble_step(pdir: ProjectDir, project: Project, number: int, plan: Optiona
         if not art_path.exists():
             log(f"  (panel {i + 1} has no art yet, skipping)")
             continue
-        img = compose.letter_panel(Image.open(art_path), panel, project.width, project.font)
+        # Texts the model already drew into this art (per the prompt it was drawn with) aren't lettered again.
+        saved = art_path.with_suffix(".prompt.txt")
+        drawn_with_text = saved.exists() and MODEL_TEXT_MARKER in saved.read_text(encoding="utf-8")
+        to_letter = split_lettering(project, panel)[1] if drawn_with_text else panel
+        img = compose.letter_panel(Image.open(art_path), to_letter, project.width, project.font)
         img.save(cdir / "panels" / f"panel_{i + 1:03d}.png")
         lettered.append(img)
         plans.append(panel)

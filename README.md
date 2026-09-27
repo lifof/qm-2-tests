@@ -197,6 +197,16 @@ The storyboard does more than split text:
 
 `mock` is a test mode only. It pastes each paragraph in as the image prompt, so the images won't follow the story. The app warns you before you use it.
 
+## Text: app lettering or Qwen-Image lettering
+
+By default the image model draws art only. The app then adds the text on top: speech, thought, shout and whisper bubbles, captions, game windows and sound effects. You get the exact wording every time, and re-lettering is instant (`render --letter-only`).
+
+Qwen-Image is also very good at typography, so you can let it letter the panels itself: *Settings → Text: drawn by Qwen-Image*, or `--lettering model`. Each panel's texts then go into its image prompt, quoted exactly and with their form described: a speech bubble with its tail pointing to the speaker, or coming from off-panel; a caption box; a blue holographic game window; bold SFX lettering. The model draws them in the art's own style. "No text" terms are dropped from the negative prompt automatically.
+
+- **Long text stays with the app.** Texts longer than `--model-text-max-words` (default 30), game windows over 8 lines, and anything past about 60 words per panel are still added by the app, since image models get unreliable with long passages.
+- **Trade-offs.** The model can occasionally misspell a word; redraw that panel. Changing any text means redrawing the art.
+- **Switching on an existing chapter.** Use *Draw / redraw → Missing panels, and panels whose prompt changed* (CLI: `render <project> <n> --changed`). Only panels that contain text are redrawn.
+
 ## Long chapters
 
 Chapters of any length are handled without dropping content:

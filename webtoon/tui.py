@@ -577,6 +577,8 @@ class App:
                 Choice(f"Art style: {short(p.style)}", "style"),
                 Choice(f"Negative prompt: {short(p.negative_prompt)}", "negative"),
                 Choice(f"Strip width: {p.width}px", "width"),
+                Choice("Text: " + ("drawn by Qwen-Image into the art" if p.lettering == "model" else
+                                   "added on top by the app"), "lettering"),
                 Choice(f"Lettering font: {p.font or 'auto'}", "font"),
                 Separator("-- Other --"),
                 Choice("API keys for this session", "keys"),
@@ -635,6 +637,25 @@ class App:
                                               multiline=True).strip()
             elif what == "width":
                 p.width = self.number("Strip width in pixels:", p.width)
+            elif what == "lettering":
+                self.console.print(
+                    "[dim]Drawn by Qwen-Image: dialogue, captions, game windows and sound effects are part of the "
+                    "image prompt, so the model letters them in its own style. It can occasionally misspell a word "
+                    "(redraw that panel), and changing text means redrawing the art. Texts longer than the limit - "
+                    "e.g. character sheets - are still added by the app.\n"
+                    "Added by the app: exact text every time, instant re-lettering, simpler look.[/]")
+                old = p.lettering
+                p.lettering = self.select("Who draws the text?", [
+                    Choice("Qwen-Image draws it into the art", "model"),
+                    Choice("The app adds it on top of the art", "app")], default=p.lettering)
+                if p.lettering == "model":
+                    p.model_text_max_words = self.number(
+                        "Longest text (in words) Qwen-Image should letter; longer ones are added by the app:",
+                        p.model_text_max_words)
+                if p.lettering != old and p.chapters:
+                    self.console.print("[dim]Existing chapters keep their current art until redrawn: Draw / redraw a "
+                                       "chapter > 'Missing panels, and panels whose prompt changed' redraws just the "
+                                       "panels that have text.[/]")
             elif what == "font":
                 font = self.path("Path to a .ttf font (empty = auto):", p.font or "",
                                  validate=lambda v: not v or Path(v).expanduser().is_file() or "File not found")
@@ -809,7 +830,7 @@ class App:
         drawn = sum(1 for i in range(len(plan.panels)) if (art / f"panel_{i + 1:03d}.png").exists())
         self.console.print(f"{drawn}/{len(plan.panels)} panels drawn.")
         mode = self.select("Draw what?", [
-            Choice("Missing panels only", "missing"),
+            Choice("Missing panels, and panels whose prompt changed (e.g. after switching lettering)", "missing"),
             Choice("Specific panels (e.g. 3, 7-9)", "some"),
             Choice("Everything again", "all"),
             Choice("Only redo lettering / strip (no image generation)", "letter"),
@@ -824,7 +845,8 @@ class App:
             render_step(self.pdir, self.project, number, only=parse_panel_list(spec), force=True,
                         backend=self.backend(), log=self.log)
         else:
-            render_step(self.pdir, self.project, number, force=mode == "all", backend=self.backend(), log=self.log)
+            render_step(self.pdir, self.project, number, force=mode == "all", backend=self.backend(), log=self.log,
+                        redraw_changed=True)
         self.show_result(number)
 
     @staticmethod

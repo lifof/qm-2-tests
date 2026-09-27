@@ -143,6 +143,8 @@ class Project(BaseModel):
     negative_prompt: str
     width: int = 800  # final strip width in pixels
     font: Optional[str] = None  # path to a .ttf for lettering; auto-detected if unset
+    lettering: str = "app"  # "app": text drawn on top by the app | "model": Qwen-Image draws it into the art
+    model_text_max_words: int = 30  # with "model": longer texts (e.g. character sheets) are still lettered by the app
     image: ImageSettings = ImageSettings()
     planner: PlannerSettings = PlannerSettings()
     characters: List[Character] = []
